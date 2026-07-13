@@ -22,7 +22,7 @@ const FREE_SCANS = 3;
 /** Mid-month pace multiplier used for the end-of-month projection */
 const PACE = 1.32;
 const IDLE_WASTE = 10.0;
-const STRIPE_URL = "https://buy.stripe.com/example";
+const STRIPE_URL = "https://buy.stripe.com/test_bJe9AV3umdUgd9bb4HfrW00";
 
 type ServiceStatus = "active" | "warning" | "paused";
 type ScanStatus = "idle" | "scanning" | "success" | "error";
