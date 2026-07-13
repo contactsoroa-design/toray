@@ -21,9 +21,9 @@ const fraunces = Fraunces({
 });
 
 export const metadata: Metadata = {
-  title: "AI-Pulse — Know your AI burn before your card does",
+  title: "ToRay — Know your AI burn before your card does",
   description:
-    "Every AI API and subscription on one calm dashboard. Spend projections, idle-spend alerts, and screenshot scanning for indie builders. $12/mo.",
+    "Every AI API and subscription on one calm dashboard. Spend projections, idle-spend alerts, and screenshot scanning for indie builders.",
 };
 
 export default function RootLayout({

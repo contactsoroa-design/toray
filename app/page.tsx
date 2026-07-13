@@ -165,20 +165,32 @@ function LogoMark() {
   return (
     <svg viewBox="0 0 32 32" className="h-8 w-8" aria-hidden>
       <defs>
-        <linearGradient id="pulse-mark" x1="0%" y1="100%" x2="100%" y2="0%">
+        <linearGradient id="toray-mark" x1="0%" y1="100%" x2="100%" y2="0%">
           <stop offset="0%" stopColor="#3b5b4c" />
           <stop offset="55%" stopColor="#6f9e7c" />
           <stop offset="100%" stopColor="#d4a574" />
         </linearGradient>
       </defs>
-      <circle cx="16" cy="16" r="15.5" fill="url(#pulse-mark)" />
+      <circle cx="16" cy="16" r="15.5" fill="url(#toray-mark)" />
       <path
-        d="M7 16 L12 16 L14 11 L18 21 L20 16 L25 16"
+        d="M10 21 L22 11"
         stroke="#F5F0E8"
         strokeWidth="2"
         strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
+      />
+      <path
+        d="M10 15.5 L16.5 11"
+        stroke="#F5F0E8"
+        strokeWidth="2"
+        strokeLinecap="round"
+        opacity="0.45"
+      />
+      <path
+        d="M15.5 21 L22 15.5"
+        stroke="#F5F0E8"
+        strokeWidth="2"
+        strokeLinecap="round"
+        opacity="0.45"
       />
     </svg>
   );
@@ -368,7 +380,8 @@ export default function Dashboard() {
           <div className="flex items-center gap-3">
             <LogoMark />
             <span className="font-serif text-[22px] tracking-[-0.02em] text-bone">
-              AI-Pulse
+              ToRay
+              <span className="text-mint">.</span>
             </span>
           </div>
 
@@ -701,7 +714,7 @@ export default function Dashboard() {
             {/* Pro upsell */}
             <div className="rounded-[28px] border border-sage/40 bg-gradient-to-b from-sage/20 to-surface p-6 md:p-8">
               <div className="flex items-center justify-between">
-                <Eyebrow>AI-Pulse Pro</Eyebrow>
+                <Eyebrow>ToRay Pro</Eyebrow>
                 <span className="rounded-full bg-mint/15 px-2.5 py-1 text-[11px] font-medium text-mint">
                   Founding price
                 </span>
@@ -759,7 +772,7 @@ export default function Dashboard() {
 
       <footer className="relative z-10 border-t border-hairline">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6 text-[12px] text-bone-muted">
-          <span>© 2026 AI-Pulse</span>
+          <span>© 2026 ToRay</span>
           <span>All spend data stays in your browser</span>
         </div>
       </footer>
