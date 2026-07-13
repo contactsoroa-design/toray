@@ -24,6 +24,25 @@ const PACE = 1.32;
 const IDLE_WASTE = 10.0;
 const STRIPE_URL = "https://buy.stripe.com/test_bJe9AV3umdUgd9bb4HfrW00";
 
+function StripeCheckoutLink({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <a
+      href={STRIPE_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={className}
+    >
+      {children}
+    </a>
+  );
+}
+
 type ServiceStatus = "active" | "warning" | "paused";
 type ScanStatus = "idle" | "scanning" | "success" | "error";
 
@@ -389,13 +408,10 @@ export default function Dashboard() {
             <span className="hidden text-sm text-bone-muted sm:block">
               Free plan · {scansLeft} scan{scansLeft === 1 ? "" : "s"} left
             </span>
-            <a
-              href={STRIPE_URL}
-              className="inline-flex items-center gap-1.5 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow"
-            >
+            <StripeCheckoutLink className="inline-flex items-center gap-1.5 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow">
               Upgrade — $12/mo
               <ArrowUpRight className="h-3.5 w-3.5 opacity-80" />
-            </a>
+            </StripeCheckoutLink>
           </div>
         </div>
       </header>
@@ -572,12 +588,9 @@ export default function Dashboard() {
               <p className="text-[13px] text-clay">
                 You could save ${IDLE_WASTE.toFixed(2)}/mo by pausing idle tools
               </p>
-              <a
-                href={STRIPE_URL}
-                className="shrink-0 text-[13px] font-medium text-clay underline-offset-4 transition hover:underline"
-              >
+              <StripeCheckoutLink className="shrink-0 text-[13px] font-medium text-clay underline-offset-4 transition hover:underline">
                 Auto-detect with Pro →
-              </a>
+              </StripeCheckoutLink>
             </div>
           </div>
 
@@ -633,12 +646,9 @@ export default function Dashboard() {
                       Go unlimited — and let Pro sync your usage automatically
                       every day.
                     </p>
-                    <a
-                      href={STRIPE_URL}
-                      className="mt-6 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow"
-                    >
+                    <StripeCheckoutLink className="mt-6 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow">
                       Unlock unlimited — $12/mo
-                    </a>
+                    </StripeCheckoutLink>
                   </>
                 ) : (
                   <>
@@ -699,12 +709,9 @@ export default function Dashboard() {
                   {scanStatus === "success" && (
                     <>
                       {" "}
-                      <a
-                        href={STRIPE_URL}
-                        className="text-sage-soft underline-offset-4 hover:underline"
-                      >
+                      <StripeCheckoutLink className="text-sage-soft underline-offset-4 hover:underline">
                         Pro does this automatically, daily →
-                      </a>
+                      </StripeCheckoutLink>
                     </>
                   )}
                 </p>
@@ -743,16 +750,13 @@ export default function Dashboard() {
                 ))}
               </ul>
 
-              <a
-                href={STRIPE_URL}
-                className="mt-7 flex w-full items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-[15px] font-medium text-bone transition duration-180 hover:bg-sage-glow"
-              >
-                Upgrade to Pro
+              <StripeCheckoutLink className="mt-7 flex w-full items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-[15px] font-medium text-bone transition duration-180 hover:bg-sage-glow">
+                Upgrade to Pro — $12/mo
                 <ArrowUpRight className="h-4 w-4 opacity-80" />
-              </a>
+              </StripeCheckoutLink>
               <p className="mt-3 text-center text-[12px] text-bone-muted">
-                Pays for itself if it catches one idle subscription. Cancel
-                anytime.
+                Secure checkout via Stripe. Pays for itself if it catches one
+                idle subscription. Cancel anytime.
               </p>
             </div>
 
