@@ -21,8 +21,9 @@ const fraunces = Fraunces({
 });
 
 export const metadata: Metadata = {
-  title: "ToRay — AI支出ダッシュボード",
-  description: "AI APIのトークン消費量とサブスク予算を一目で管理・可視化",
+  title: "AI-Pulse — Know your AI burn before your card does",
+  description:
+    "Every AI API and subscription on one calm dashboard. Spend projections, idle-spend alerts, and screenshot scanning for indie builders. $12/mo.",
 };
 
 export default function RootLayout({
@@ -32,7 +33,7 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="ja"
+      lang="en"
       className={`${dmSans.variable} ${dmMono.variable} ${fraunces.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">{children}</body>

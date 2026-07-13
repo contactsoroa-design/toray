@@ -1,13 +1,28 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Plus, ScanLine } from "lucide-react";
+import {
+  ArrowUpRight,
+  BellRing,
+  Check,
+  Lock,
+  Plus,
+  RefreshCw,
+  Radar,
+  ScanLine,
+  Star,
+} from "lucide-react";
 
 const BUDGET = 200;
 const INITIAL_SPENT = 142.5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
 const SCAN_DURATION_MS = 3000;
+const FREE_SCANS = 3;
+/** Mid-month pace multiplier used for the end-of-month projection */
+const PACE = 1.32;
+const IDLE_WASTE = 10.0;
+const STRIPE_URL = "https://buy.stripe.com/example";
 
 type ServiceStatus = "active" | "warning" | "paused";
 type ScanStatus = "idle" | "scanning" | "success" | "error";
@@ -25,46 +40,46 @@ type Service = {
 const services: Service[] = [
   {
     name: "OpenAI API",
-    type: "従量課金",
+    type: "Usage-based",
     amount: 68.2,
     isUsageBased: true,
-    renewal: "毎月1日リセット",
+    renewal: "Resets Aug 1",
     status: "warning",
     accent: "bg-clay/20 text-clay",
   },
   {
     name: "Anthropic API",
-    type: "従量課金",
+    type: "Usage-based",
     amount: 24.3,
     isUsageBased: true,
-    renewal: "毎月1日リセット",
+    renewal: "Resets Aug 1",
     status: "active",
     accent: "bg-blush/20 text-blush",
   },
   {
     name: "ChatGPT Plus",
-    type: "サブスク",
+    type: "Subscription",
     amount: 20.0,
     isUsageBased: false,
-    renewal: "7月17日 更新",
+    renewal: "Renews Jul 17",
     status: "active",
     accent: "bg-mint/20 text-mint",
   },
   {
     name: "Midjourney",
-    type: "サブスク",
+    type: "Subscription",
     amount: 30.0,
     isUsageBased: false,
-    renewal: "7月22日 更新",
+    renewal: "Renews Jul 22",
     status: "active",
     accent: "bg-moss/25 text-sage-soft",
   },
   {
     name: "GitHub Copilot",
-    type: "サブスク",
+    type: "Subscription",
     amount: 10.0,
     isUsageBased: false,
-    renewal: "7月28日 更新",
+    renewal: "Renews Jul 28",
     status: "paused",
     accent: "bg-bone/10 text-bone-muted",
   },
@@ -72,23 +87,30 @@ const services: Service[] = [
 
 const statusConfig: Record<ServiceStatus, { label: string; chip: string }> = {
   active: {
-    label: "稼働中",
+    label: "Active",
     chip: "bg-mint/15 text-mint",
   },
   warning: {
-    label: "予算注意",
+    label: "Over pace",
     chip: "bg-clay/20 text-clay",
   },
   paused: {
-    label: "停止中",
+    label: "Idle 23 days",
     chip: "bg-bone/5 text-bone-muted",
   },
 };
 
 const SCAN_STEPS = [
-  "画像を読み込み中…",
-  "請求項目を検出中…",
-  "合計金額を抽出中…",
+  "Reading your screenshot…",
+  "Detecting billing line items…",
+  "Extracting this month's total…",
+];
+
+const PRO_FEATURES = [
+  { icon: RefreshCw, text: "Daily auto-sync from OpenAI, Anthropic + 12 more" },
+  { icon: BellRing, text: "Overspend alerts before your card finds out" },
+  { icon: Radar, text: "Idle-spend finder — members save $38/mo on average" },
+  { icon: ScanLine, text: "Unlimited screenshot scans" },
 ];
 
 function generateFakeAmount(previous: number): number {
@@ -143,38 +165,26 @@ function LogoMark() {
   return (
     <svg viewBox="0 0 32 32" className="h-8 w-8" aria-hidden>
       <defs>
-        <linearGradient id="toray-mark" x1="0%" y1="100%" x2="100%" y2="0%">
+        <linearGradient id="pulse-mark" x1="0%" y1="100%" x2="100%" y2="0%">
           <stop offset="0%" stopColor="#3b5b4c" />
           <stop offset="55%" stopColor="#6f9e7c" />
           <stop offset="100%" stopColor="#d4a574" />
         </linearGradient>
       </defs>
-      <circle cx="16" cy="16" r="15.5" fill="url(#toray-mark)" />
+      <circle cx="16" cy="16" r="15.5" fill="url(#pulse-mark)" />
       <path
-        d="M10 21 L22 11"
+        d="M7 16 L12 16 L14 11 L18 21 L20 16 L25 16"
         stroke="#F5F0E8"
         strokeWidth="2"
         strokeLinecap="round"
-      />
-      <path
-        d="M10 15.5 L16.5 11"
-        stroke="#F5F0E8"
-        strokeWidth="2"
-        strokeLinecap="round"
-        opacity="0.45"
-      />
-      <path
-        d="M15.5 21 L22 15.5"
-        stroke="#F5F0E8"
-        strokeWidth="2"
-        strokeLinecap="round"
-        opacity="0.45"
+        strokeLinejoin="round"
+        fill="none"
       />
     </svg>
   );
 }
 
-/** 目盛り式メーター：セージ→ミント→クレイと色が移る */
+/** Segmented meter: sage → mint → clay → coral as the budget fills */
 function Meter({ ratio }: { ratio: number }) {
   const SEGMENTS = 28;
   const filled = Math.round((Math.min(ratio, 100) / 100) * SEGMENTS);
@@ -221,7 +231,7 @@ function ScanLoader({ stepIndex }: { stepIndex: number }) {
         <ScanLine className="relative h-6 w-6 text-sage-soft" strokeWidth={1.5} />
       </div>
 
-      <p className="mt-5 font-serif text-xl text-bone">AIが画像を解析中...</p>
+      <p className="mt-5 font-serif text-xl text-bone">Reading your usage…</p>
       <p className="mt-2 text-[13px] text-bone-muted">{SCAN_STEPS[stepIndex]}</p>
 
       <div className="mt-6 flex gap-2">
@@ -248,13 +258,18 @@ export default function Dashboard() {
   const [scanStatus, setScanStatus] = useState<ScanStatus>("idle");
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [scanStep, setScanStep] = useState(0);
+  const [scansLeft, setScansLeft] = useState(FREE_SCANS);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
 
   const animatedSpent = useAnimatedNumber(spent);
   const spentRatio = Math.min((animatedSpent / BUDGET) * 100, 100);
   const remaining = Math.max(BUDGET - animatedSpent, 0);
+  const projected = Math.round(animatedSpent * PACE * 100) / 100;
+  const overspend = Math.round((projected - BUDGET) * 100) / 100;
+  const isOverPace = overspend > 0;
   const isScanning = scanStatus === "scanning";
+  const outOfScans = scansLeft <= 0;
 
   useEffect(() => {
     return () => {
@@ -277,14 +292,15 @@ export default function Dashboard() {
   }
 
   function runFakeScan(file: File) {
+    if (outOfScans) return;
     if (!ALLOWED_TYPES.has(file.type)) {
       setScanStatus("error");
-      setScanMessage("PNG / JPEG / WebP のみ対応しています");
+      setScanMessage("PNG, JPEG or WebP only");
       return;
     }
     if (file.size > MAX_FILE_BYTES) {
       setScanStatus("error");
-      setScanMessage("ファイルサイズは10MB以下にしてください");
+      setScanMessage("Keep it under 10MB");
       return;
     }
 
@@ -307,12 +323,12 @@ export default function Dashboard() {
       const amount = generateFakeAmount(spent);
       setSpent(amount);
       setScanStatus("success");
-      setScanMessage(`$${amount.toFixed(2)} を読み取りました`);
+      setScanMessage(`Detected $${amount.toFixed(2)} — dashboard updated`);
+      setScansLeft((prev) => Math.max(prev - 1, 0));
       setLastSyncedAt(
-        new Date().toLocaleTimeString("ja-JP", {
-          hour: "2-digit",
+        new Date().toLocaleTimeString("en-US", {
+          hour: "numeric",
           minute: "2-digit",
-          timeZone: "Asia/Tokyo",
         }),
       );
     }, SCAN_DURATION_MS);
@@ -327,14 +343,13 @@ export default function Dashboard() {
   function handleDrop(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsDragging(false);
-    if (isScanning) return;
+    if (isScanning || outOfScans) return;
     const file = event.dataTransfer.files?.[0];
     if (file) runFakeScan(file);
   }
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-background font-sans text-bone selection:bg-sage/40">
-      {/* Hers風の深いセージ＋クレイの雰囲気 */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(111,158,124,0.22),_transparent_55%)]"
@@ -353,19 +368,19 @@ export default function Dashboard() {
           <div className="flex items-center gap-3">
             <LogoMark />
             <span className="font-serif text-[22px] tracking-[-0.02em] text-bone">
-              ToRay
+              AI-Pulse
             </span>
           </div>
 
           <div className="flex items-center gap-5">
             <span className="hidden text-sm text-bone-muted sm:block">
-              Free プラン
+              Free plan · {scansLeft} scan{scansLeft === 1 ? "" : "s"} left
             </span>
             <a
-              href="https://buy.stripe.com/example"
+              href={STRIPE_URL}
               className="inline-flex items-center gap-1.5 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow"
             >
-              Proにアップグレード
+              Upgrade — $12/mo
               <ArrowUpRight className="h-3.5 w-3.5 opacity-80" />
             </a>
           </div>
@@ -373,36 +388,50 @@ export default function Dashboard() {
       </header>
 
       <main className="relative z-10 mx-auto max-w-6xl px-6 pb-24">
-        <div className="flex items-end justify-between py-12 md:py-16">
+        <div className="flex items-end justify-between py-12 md:py-14">
           <div>
-            <Eyebrow>Overview — 2026年7月</Eyebrow>
+            <Eyebrow>July 2026 — Live overview</Eyebrow>
             <h1 className="mt-3 font-serif text-4xl font-medium tracking-[-0.02em] text-bone md:text-5xl">
-              今月のAI支出
+              Know your AI burn
+              <br className="hidden md:block" /> before your card does.
             </h1>
-            <p className="mt-3 max-w-md text-[15px] leading-relaxed text-bone-muted">
-              トークン消費とサブスク予算を、ひとつのやさしい画面で。
+            <p className="mt-4 max-w-md text-[15px] leading-relaxed text-bone-muted">
+              Every API and AI subscription on one calm dashboard — with an
+              end-of-month projection, so overspend never surprises you again.
             </p>
+            <div className="mt-5 flex items-center gap-3">
+              <span className="flex -space-x-2">
+                {["bg-mint", "bg-clay", "bg-blush", "bg-sage-soft"].map((c) => (
+                  <span
+                    key={c}
+                    className={`h-6 w-6 rounded-full ${c} ring-2 ring-background`}
+                  />
+                ))}
+              </span>
+              <span className="flex items-center gap-1 text-[13px] text-bone-muted">
+                <Star className="h-3.5 w-3.5 fill-clay text-clay" />
+                Trusted by 1,300+ indie builders
+              </span>
+            </div>
           </div>
           <p className="hidden text-sm text-bone-muted md:block">
-            {lastSyncedAt ? `最終同期 ${lastSyncedAt} JST` : "最終同期 —"}
+            {lastSyncedAt ? `Last synced ${lastSyncedAt}` : "Last synced —"}
           </p>
         </div>
 
-        {/* サマリーカード */}
+        {/* Summary cards */}
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-7">
             <div className="flex items-center justify-between">
-              <Eyebrow>総支出 / 予算</Eyebrow>
+              <Eyebrow>Spend / Budget</Eyebrow>
               <span
                 className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
-                  spentRatio >= 80
+                  isOverPace
                     ? "bg-danger/20 text-danger"
-                    : spentRatio >= 70
-                      ? "bg-clay/20 text-clay"
-                      : "bg-sage/25 text-mint"
+                    : "bg-sage/25 text-mint"
                 }`}
               >
-                {spentRatio >= 80 ? "上限注意" : spentRatio >= 70 ? "やや高め" : "予算内"}
+                {isOverPace ? "Over pace" : "On track"}
               </span>
             </div>
             <div className="mt-4 flex items-baseline gap-2">
@@ -420,59 +449,66 @@ export default function Dashboard() {
             <div className="mt-6">
               <Meter ratio={spentRatio} />
               <div className="mt-2.5 flex justify-between text-xs text-bone-muted">
-                <span>{spentRatio.toFixed(0)}% 消化</span>
-                <span>残り ${remaining.toFixed(2)}</span>
+                <span>{spentRatio.toFixed(0)}% used</span>
+                <span>${remaining.toFixed(2)} left</span>
               </div>
+              <p
+                className={`mt-3 text-[13px] ${
+                  isOverPace ? "text-danger" : "text-bone-muted"
+                }`}
+              >
+                {isOverPace
+                  ? `Projected $${projected.toFixed(0)} by Jul 31 — $${overspend.toFixed(0)} over budget`
+                  : `Projected $${projected.toFixed(0)} by Jul 31`}
+              </p>
             </div>
           </div>
 
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-7">
             <div className="flex items-center justify-between">
-              <Eyebrow>アクティブなツール</Eyebrow>
-              <span className="flex -space-x-1.5">
-                <span className="h-2.5 w-2.5 rounded-full bg-mint ring-2 ring-surface" />
-                <span className="h-2.5 w-2.5 rounded-full bg-clay ring-2 ring-surface" />
-                <span className="h-2.5 w-2.5 rounded-full bg-blush ring-2 ring-surface" />
+              <Eyebrow>Idle spend found</Eyebrow>
+              <span className="rounded-full bg-clay/20 px-2.5 py-1 text-[11px] font-medium text-clay">
+                Save now
               </span>
             </div>
             <div className="mt-4 flex items-baseline gap-2">
-              <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-bone">
-                5
+              <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-clay">
+                ${IDLE_WASTE.toFixed(2)}
               </span>
-              <span className="text-sm text-bone-muted">個</span>
+              <span className="text-sm text-bone-muted">/mo</span>
             </div>
             <p className="mt-6 text-sm leading-relaxed text-bone-muted">
-              従量課金 ×2　・　サブスク ×3
+              GitHub Copilot — untouched for 23 days, still billing.
             </p>
           </div>
 
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-7">
             <div className="flex items-center justify-between">
-              <Eyebrow>次の請求</Eyebrow>
+              <Eyebrow>Next renewal</Eyebrow>
               <span className="rounded-full bg-clay/20 px-2.5 py-1 text-[11px] font-medium text-clay">
-                あと4日
+                In 4 days
               </span>
             </div>
             <div className="mt-4 flex items-baseline gap-2">
               <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-bone">
                 4
               </span>
-              <span className="text-sm text-bone-muted">日後 — 7月17日</span>
+              <span className="text-sm text-bone-muted">days — Jul 17</span>
             </div>
             <p className="mt-6 text-sm leading-relaxed text-bone-muted">
-              ChatGPT Plus　$20.00
+              ChatGPT Plus · $20.00
             </p>
           </div>
         </section>
 
         <section className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-5">
-          {/* サービス一覧 */}
+          {/* Services */}
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-8 lg:col-span-3">
             <div className="flex items-center justify-between">
-              <Eyebrow>接続中のサービス</Eyebrow>
+              <Eyebrow>Connected services</Eyebrow>
               <button className="inline-flex items-center gap-1 text-sm text-sage-soft transition hover:text-bone">
                 <Plus className="h-3.5 w-3.5" />
-                追加
+                Add
               </button>
             </div>
 
@@ -502,7 +538,7 @@ export default function Dashboard() {
                         </span>
                       </div>
                       <p className="mt-1 text-[13px] text-bone-muted">
-                        {service.type} ・ {service.renewal}
+                        {service.type} · {service.renewal}
                       </p>
                     </div>
 
@@ -511,7 +547,7 @@ export default function Dashboard() {
                         ${service.amount.toFixed(2)}
                       </p>
                       <p className="text-[11px] text-bone-muted">
-                        {service.isUsageBased ? "今月の消費" : "月額"}
+                        {service.isUsageBased ? "This month" : "Monthly"}
                       </p>
                     </div>
                   </li>
@@ -519,16 +555,28 @@ export default function Dashboard() {
               })}
             </ul>
 
-            <p className="mt-5 text-right text-[13px] tabular-nums text-bone-muted">
-              合計 $152.50{" "}
-              <span className="text-bone/30">（予定額を含む）</span>
-            </p>
+            <div className="mt-5 flex items-center justify-between rounded-2xl bg-clay/10 px-4 py-3">
+              <p className="text-[13px] text-clay">
+                You could save ${IDLE_WASTE.toFixed(2)}/mo by pausing idle tools
+              </p>
+              <a
+                href={STRIPE_URL}
+                className="shrink-0 text-[13px] font-medium text-clay underline-offset-4 transition hover:underline"
+              >
+                Auto-detect with Pro →
+              </a>
+            </div>
           </div>
 
-          {/* クイック分析 */}
-          <div className="lg:col-span-2">
+          {/* Quick scan + Pro upsell */}
+          <div className="space-y-6 lg:col-span-2">
             <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-8">
-              <Eyebrow>クイック分析</Eyebrow>
+              <div className="flex items-center justify-between">
+                <Eyebrow>Quick scan</Eyebrow>
+                <span className="text-[12px] text-bone-muted">
+                  {scansLeft} of {FREE_SCANS} free left
+                </span>
+              </div>
 
               <input
                 ref={fileInputRef}
@@ -541,11 +589,11 @@ export default function Dashboard() {
               <div
                 onDragOver={(e) => {
                   e.preventDefault();
-                  if (!isScanning) setIsDragging(true);
+                  if (!isScanning && !outOfScans) setIsDragging(true);
                 }}
                 onDragLeave={() => setIsDragging(false)}
                 onDrop={handleDrop}
-                className={`relative mt-5 flex min-h-[300px] flex-col items-center justify-center overflow-hidden rounded-[24px] border border-dashed px-6 text-center transition duration-180 ${
+                className={`relative mt-5 flex min-h-[260px] flex-col items-center justify-center overflow-hidden rounded-[24px] border border-dashed px-6 text-center transition duration-180 ${
                   isDragging
                     ? "border-sage-soft bg-sage/15"
                     : "border-hairline bg-background/40"
@@ -560,6 +608,25 @@ export default function Dashboard() {
 
                 {isScanning ? (
                   <ScanLoader stepIndex={scanStep} />
+                ) : outOfScans ? (
+                  <>
+                    <div className="mb-1 flex h-14 w-14 items-center justify-center rounded-full bg-clay/20">
+                      <Lock className="h-6 w-6 text-clay" strokeWidth={1.5} />
+                    </div>
+                    <h3 className="mt-3 font-serif text-xl text-bone">
+                      Free scans used up
+                    </h3>
+                    <p className="mt-2 max-w-[240px] text-[13px] leading-relaxed text-bone-muted">
+                      Go unlimited — and let Pro sync your usage automatically
+                      every day.
+                    </p>
+                    <a
+                      href={STRIPE_URL}
+                      className="mt-6 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow"
+                    >
+                      Unlock unlimited — $12/mo
+                    </a>
+                  </>
                 ) : (
                   <>
                     {previewUrl && scanStatus === "success" ? (
@@ -567,7 +634,7 @@ export default function Dashboard() {
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={previewUrl}
-                          alt="アップロードしたスクリーンショット"
+                          alt="Uploaded usage screenshot"
                           className="h-16 w-28 object-cover opacity-80"
                         />
                       </div>
@@ -583,10 +650,11 @@ export default function Dashboard() {
                     )}
 
                     <h3 className="mt-3 font-serif text-xl text-bone">
-                      Usage画面をスキャン
+                      Scan a usage screenshot
                     </h3>
                     <p className="mt-2 max-w-[240px] text-[13px] leading-relaxed text-bone-muted">
-                      OpenAI / Anthropic の利用料金画面をドロップすると、今月の合計金額を自動で読み取ります
+                      Drop your OpenAI or Anthropic usage page — we read this
+                      month&apos;s total in seconds.
                     </p>
 
                     <button
@@ -594,42 +662,105 @@ export default function Dashboard() {
                       onClick={() => fileInputRef.current?.click()}
                       className="mt-6 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow"
                     >
-                      ファイルを選択
+                      Choose file
                     </button>
 
                     <p className="mt-4 text-[11px] tracking-wide text-bone-muted/70">
-                      PNG / JPG — Max 10MB
+                      PNG / JPG — Max 10MB · Never leaves your browser
                     </p>
                   </>
                 )}
               </div>
 
-              {scanMessage ? (
+              {scanMessage && (
                 <p
                   className={`mt-4 text-[13px] ${
                     scanStatus === "error"
                       ? "text-warning"
                       : scanStatus === "success"
-                        ? "text-sage-soft"
+                        ? "text-mint"
                         : "text-bone-muted"
                   }`}
                 >
                   {scanMessage}
-                </p>
-              ) : (
-                <p className="mt-4 text-[13px] leading-relaxed text-bone-muted">
-                  platform.openai.com のUsageページ全体をキャプチャすると精度が上がります
+                  {scanStatus === "success" && (
+                    <>
+                      {" "}
+                      <a
+                        href={STRIPE_URL}
+                        className="text-sage-soft underline-offset-4 hover:underline"
+                      >
+                        Pro does this automatically, daily →
+                      </a>
+                    </>
+                  )}
                 </p>
               )}
             </div>
+
+            {/* Pro upsell */}
+            <div className="rounded-[28px] border border-sage/40 bg-gradient-to-b from-sage/20 to-surface p-6 md:p-8">
+              <div className="flex items-center justify-between">
+                <Eyebrow>AI-Pulse Pro</Eyebrow>
+                <span className="rounded-full bg-mint/15 px-2.5 py-1 text-[11px] font-medium text-mint">
+                  Founding price
+                </span>
+              </div>
+
+              <div className="mt-4 flex items-baseline gap-2">
+                <span className="font-serif text-4xl tracking-[-0.02em] text-bone">
+                  $12
+                </span>
+                <span className="text-sm text-bone-muted">
+                  /mo — locks in forever
+                </span>
+              </div>
+
+              <ul className="mt-6 space-y-3">
+                {PRO_FEATURES.map(({ icon: Icon, text }) => (
+                  <li key={text} className="flex items-start gap-3">
+                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sage/30">
+                      <Check className="h-3 w-3 text-mint" strokeWidth={2.5} />
+                    </span>
+                    <span className="text-[13.5px] leading-relaxed text-bone/90">
+                      {text}
+                    </span>
+                    <Icon className="ml-auto mt-0.5 h-4 w-4 shrink-0 text-sage-soft/50" />
+                  </li>
+                ))}
+              </ul>
+
+              <a
+                href={STRIPE_URL}
+                className="mt-7 flex w-full items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-[15px] font-medium text-bone transition duration-180 hover:bg-sage-glow"
+              >
+                Upgrade to Pro
+                <ArrowUpRight className="h-4 w-4 opacity-80" />
+              </a>
+              <p className="mt-3 text-center text-[12px] text-bone-muted">
+                Pays for itself if it catches one idle subscription. Cancel
+                anytime.
+              </p>
+            </div>
+
+            <figure className="px-2">
+              <blockquote className="text-[13.5px] leading-relaxed text-bone-muted">
+                &ldquo;Caught $62/mo I completely forgot I was paying. Paid for
+                a year of Pro in the first five minutes.&rdquo;
+              </blockquote>
+              <figcaption className="mt-2 flex items-center gap-2 text-[12px] text-bone-muted/70">
+                <span className="h-5 w-5 rounded-full bg-blush/40" />
+                Alex R. — solo founder, shipping with GPT-4o
+              </figcaption>
+            </figure>
           </div>
         </section>
       </main>
 
       <footer className="relative z-10 border-t border-hairline">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6 text-[12px] text-bone-muted">
-          <span>© 2026 ToRay</span>
-          <span>すべての支出データはローカルに保存されます</span>
+          <span>© 2026 AI-Pulse</span>
+          <span>All spend data stays in your browser</span>
         </div>
       </footer>
     </div>
