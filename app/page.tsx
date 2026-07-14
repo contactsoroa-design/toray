@@ -673,11 +673,13 @@ export default function Dashboard() {
                     )}
 
                     <h3 className="mt-3 font-serif text-xl text-bone">
-                      Scan a usage screenshot
+                      Closed beta demo
                     </h3>
-                    <p className="mt-2 max-w-[240px] text-[13px] leading-relaxed text-bone-muted">
-                      Drop your OpenAI or Anthropic usage page — we read this
-                      month&apos;s total in seconds.
+                    <p className="mt-2 max-w-[280px] text-[13px] leading-relaxed text-bone-muted">
+                      The AI auto-analysis feature is currently in closed beta.
+                      Drop a screenshot below to experience (simulate) the
+                      demo&apos;s loading speed and the beauty of its
+                      visualization.
                     </p>
 
                     <button
