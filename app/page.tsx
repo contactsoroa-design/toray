@@ -252,6 +252,63 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
   );
 }
 
+function ValidationPhaseBanner() {
+  return (
+    <section
+      aria-labelledby="validation-phase-heading"
+      className="mb-8 rounded-[28px] border border-indigo-500/25 bg-gradient-to-br from-slate-900/90 via-indigo-950/50 to-surface p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] md:p-8"
+    >
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+        <div className="max-w-2xl">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500/15 text-lg">
+              📢
+            </span>
+            <h2
+              id="validation-phase-heading"
+              className="font-serif text-xl tracking-[-0.02em] text-bone md:text-2xl"
+            >
+              Public Validation Phase
+            </h2>
+          </div>
+
+          <p className="mt-4 text-[15px] leading-relaxed text-bone/90">
+            ToRay is currently an interactive UI concept. We only build features
+            that engineers actually want to use.
+          </p>
+          <p className="mt-3 text-[14px] leading-relaxed text-bone-muted">
+            If you want us to fully build and launch this smart screenshot
+            scanner, please &ldquo;Subscribe&rdquo; via the button below using
+            Stripe&apos;s official test card number:{" "}
+            <span className="rounded-md bg-slate-800/80 px-2 py-0.5 font-mono text-[13px] text-indigo-200 ring-1 ring-indigo-500/20">
+              4242 4242 4242 4242
+            </span>{" "}
+            (It&apos;s 100% free, no real money will be charged).
+          </p>
+          <p className="mt-3 text-[14px] leading-relaxed text-bone-muted">
+            Your test checkout acts as a &ldquo;vote&rdquo; to prioritize this
+            product. Early voters will lock in our $12/month Founding Member
+            price forever upon official launch.
+          </p>
+        </div>
+
+        <div className="flex shrink-0 flex-col items-stretch gap-3 sm:items-end lg:min-w-[220px]">
+          <span className="rounded-full bg-indigo-500/15 px-3 py-1 text-center text-[11px] font-medium uppercase tracking-wider text-indigo-200/90 sm:text-right">
+            Stripe test mode · $0 charged
+          </span>
+          <StripeCheckoutLink className="inline-flex items-center justify-center gap-2 rounded-full bg-indigo-600 px-6 py-3 text-sm font-medium text-white transition duration-180 hover:bg-indigo-500">
+            Subscribe &amp; vote — $12/mo
+            <ArrowUpRight className="h-4 w-4 opacity-90" />
+          </StripeCheckoutLink>
+          <p className="text-center text-[11px] text-bone-muted/80 sm:text-right">
+            Use any future expiry · any CVC
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ScanLoader({ stepIndex }: { stepIndex: number }) {
   return (
     <div className="flex flex-col items-center">
@@ -447,6 +504,8 @@ export default function Dashboard() {
             {lastSyncedAt ? `Last synced ${lastSyncedAt}` : "Last synced —"}
           </p>
         </div>
+
+        <ValidationPhaseBanner />
 
         {/* Summary cards */}
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
