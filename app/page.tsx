@@ -718,11 +718,12 @@ export default function Dashboard() {
       if (
         !response.ok ||
         typeof result.amountUsd !== "number" ||
+        result.confidence === "low" ||
         (result.service !== "OpenAI" && result.service !== "Anthropic")
       ) {
         throw new Error(
           result.error ??
-            "We could not find a clear OpenAI or Anthropic USD total.",
+            "This does not look like a clear OpenAI Platform or Anthropic Console billing screen.",
         );
       }
 
@@ -757,6 +758,8 @@ export default function Dashboard() {
           ? error.message
           : "The billing scanner could not analyze this image.",
       );
+      // Keep the user unblocked when classification is uncertain.
+      openManualCorrection();
     }
   }
 

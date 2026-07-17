@@ -1,0 +1,3 @@
+# Real billing screenshots may contain org names / spend — keep local only.
+test/billing-golden/fixtures/real/*
+!test/billing-golden/fixtures/real/.gitkeep

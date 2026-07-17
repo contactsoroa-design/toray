@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "description": "Golden cases for ToRay billing screenshot classification + OCR.",
+  "baseUrlEnv": "BILLING_EVAL_BASE_URL",
+  "defaultBaseUrl": "http://localhost:3000",
+  "cases": [
+    {
+      "id": "openai-platform-total",
+      "file": "fixtures/openai-platform-total.png",
+      "notes": "Synthetic OpenAI Platform usage/billing screen with period total.",
+      "expect": {
+        "accept": true,
+        "service": "OpenAI",
+        "amountUsd": 142.5,
+        "amountTolerance": 0.05,
+        "allowedConfidence": ["high", "medium"]
+      }
+    },
+    {
+      "id": "anthropic-console-total",
+      "file": "fixtures/anthropic-console-total.png",
+      "notes": "Synthetic Anthropic Console usage/billing screen with period total.",
+      "expect": {
+        "accept": true,
+        "service": "Anthropic",
+        "amountUsd": 87.4,
+        "amountTolerance": 0.05,
+        "allowedConfidence": ["high", "medium"]
+      }
+    },
+    {
+      "id": "chatgpt-plus-settings",
+      "file": "fixtures/chatgpt-plus-settings.png",
+      "notes": "ChatGPT consumer subscription settings — must NOT classify as OpenAI Platform.",
+      "expect": {
+        "accept": false
+      }
+    },
+    {
+      "id": "random-landscape",
+      "file": "fixtures/random-landscape.png",
+      "notes": "Unrelated photo with a dollar string — must reject.",
+      "expect": {
+        "accept": false
+      }
+    },
+    {
+      "id": "stripe-receipt",
+      "file": "fixtures/stripe-receipt.png",
+      "notes": "Generic payment receipt — must reject.",
+      "expect": {
+        "accept": false
+      }
+    },
+    {
+      "id": "midjourney-plan",
+      "file": "fixtures/midjourney-plan.png",
+      "notes": "Other SaaS billing UI — must reject.",
+      "expect": {
+        "accept": false
+      }
+    }
+  ]
+}

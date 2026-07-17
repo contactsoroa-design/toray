@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:billing:fixtures": "node scripts/generate-billing-fixtures.mjs",
+    "test:billing": "node scripts/eval-billing-scanner.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.24.0",
