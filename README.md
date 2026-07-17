@@ -20,6 +20,20 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Waitlist form (Formspree)
+
+Create a form in [Formspree](https://formspree.io/), then copy its endpoint from the
+form's **Integration** tab (for example, `https://formspree.io/f/abcdwxyz`).
+
+Add it to `.env.local`:
+
+```bash
+NEXT_PUBLIC_FORMSPREE_ENDPOINT=https://formspree.io/f/your-form-id
+```
+
+Restart `npm run dev` after changing `.env.local`. Formspree stores each submitted
+email in its dashboard under the form's **Submissions** tab.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

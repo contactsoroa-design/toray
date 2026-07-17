@@ -4,7 +4,6 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   BellRing,
   Check,
-  Lock,
   Plus,
   RefreshCw,
   Radar,
@@ -16,13 +15,22 @@ const BUDGET = 200;
 const INITIAL_SPENT = 142.5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
-const SCAN_DURATION_MS = 3000;
-const FREE_SCANS = 3;
 const PACE = 1.32;
 const IDLE_WASTE = 10.0;
+const SCAN_HISTORY_KEY = "toray-billing-scans";
 
 type ServiceStatus = "active" | "warning" | "paused";
 type ScanStatus = "idle" | "scanning" | "success" | "error";
+type SupportedService = "OpenAI API" | "Anthropic API";
+
+type BillingScan = {
+  id: string;
+  service: SupportedService;
+  amountUsd: number;
+  billingPeriod: string | null;
+  confidence: "high" | "medium" | "low";
+  scannedAt: string;
+};
 
 type Service = {
   name: string;
@@ -89,9 +97,9 @@ const statusConfig: Record<ServiceStatus, { label: string; chip: string }> = {
 };
 
 const SCAN_STEPS = [
-  "Reading your screenshot…",
-  "Detecting billing line items…",
-  "Extracting this month's total…",
+  "Uploading securely…",
+  "Reading your billing screen…",
+  "Extracting your USD total…",
 ];
 
 const PRO_FEATURES = [
@@ -100,19 +108,6 @@ const PRO_FEATURES = [
   { icon: Radar, text: "Idle-spend finder — members save $38/mo on average" },
   { icon: ScanLine, text: "Unlimited screenshot scans" },
 ];
-
-function generateFakeAmount(previous: number): number {
-  let next = previous;
-  for (let i = 0; i < 6; i++) {
-    const candidate = Math.round((160 + Math.random() * 35) * 100) / 100;
-    if (Math.abs(candidate - previous) >= 5) {
-      next = candidate;
-      break;
-    }
-    next = candidate;
-  }
-  return next;
-}
 
 function easeOutCubic(t: number) {
   return 1 - Math.pow(1 - t, 3);
@@ -179,6 +174,7 @@ function WaitlistForm({
   email,
   onEmailChange,
   submitted,
+  isSubmitting,
   onSubmit,
   variant = "default",
   id,
@@ -186,7 +182,8 @@ function WaitlistForm({
   email: string;
   onEmailChange: (value: string) => void;
   submitted: boolean;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  isSubmitting: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
   variant?: "default" | "compact" | "indigo";
   id?: string;
 }) {
@@ -216,14 +213,15 @@ function WaitlistForm({
       <input
         type="email"
         required
+        name="email"
         value={email}
         onChange={(e) => onEmailChange(e.target.value)}
         placeholder="you@company.com"
         aria-label="Email address"
         className={inputClass}
       />
-      <button type="submit" className={buttonClass}>
-        Join the Waitlist
+      <button type="submit" disabled={isSubmitting} className={`${buttonClass} disabled:cursor-wait disabled:opacity-60`}>
+        {isSubmitting ? "Joining…" : "Join the Waitlist"}
       </button>
     </form>
   );
@@ -287,12 +285,14 @@ function ValidationPhaseBanner({
   email,
   onEmailChange,
   submitted,
+  isSubmitting,
   onSubmit,
 }: {
   email: string;
   onEmailChange: (value: string) => void;
   submitted: boolean;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  isSubmitting: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
 }) {
   return (
     <section
@@ -337,6 +337,7 @@ function ValidationPhaseBanner({
             email={email}
             onEmailChange={onEmailChange}
             submitted={submitted}
+            isSubmitting={isSubmitting}
             onSubmit={onSubmit}
             variant="indigo"
           />
@@ -373,21 +374,22 @@ function ScanLoader({ stepIndex }: { stepIndex: number }) {
 
 export default function Dashboard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const scanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [isDragging, setIsDragging] = useState(false);
   const [spent, setSpent] = useState(INITIAL_SPENT);
   const [scanStatus, setScanStatus] = useState<ScanStatus>("idle");
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [scanStep, setScanStep] = useState(0);
-  const [scansLeft, setScansLeft] = useState(FREE_SCANS);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [serviceAmounts, setServiceAmounts] = useState<
+    Partial<Record<SupportedService, number>>
+  >({});
+  const [scanHistory, setScanHistory] = useState<BillingScan[]>([]);
 
   const [waitlistEmail, setWaitlistEmail] = useState("");
   const [waitlistSubmitted, setWaitlistSubmitted] = useState(false);
-  const [waitlistEmails, setWaitlistEmails] = useState<string[]>([]);
+  const [isWaitlistSubmitting, setIsWaitlistSubmitting] = useState(false);
   const [waitlistError, setWaitlistError] = useState<string | null>(null);
 
   const animatedSpent = useAnimatedNumber(spent);
@@ -397,13 +399,37 @@ export default function Dashboard() {
   const overspend = Math.round((projected - BUDGET) * 100) / 100;
   const isOverPace = overspend > 0;
   const isScanning = scanStatus === "scanning";
-  const outOfScans = scansLeft <= 0;
 
   useEffect(() => {
-    return () => {
-      if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
-      if (stepTimerRef.current) clearInterval(stepTimerRef.current);
-    };
+    const stored = window.localStorage.getItem(SCAN_HISTORY_KEY);
+    if (!stored) return;
+
+    try {
+      const history = JSON.parse(stored) as BillingScan[];
+      const latestAmounts = history.reduce<
+        Partial<Record<SupportedService, number>>
+      >((amounts, scan) => {
+        if (scan.service && Number.isFinite(scan.amountUsd)) {
+          amounts[scan.service] = scan.amountUsd;
+        }
+        return amounts;
+      }, {});
+
+      const updatedSpend = (Object.entries(latestAmounts) as [
+        SupportedService,
+        number,
+      ][]).reduce((total, [serviceName, amount]) => {
+        const defaultAmount =
+          services.find((service) => service.name === serviceName)?.amount ?? 0;
+        return total - defaultAmount + amount;
+      }, INITIAL_SPENT);
+
+      setScanHistory(history);
+      setServiceAmounts(latestAmounts);
+      setSpent(updatedSpend);
+    } catch {
+      window.localStorage.removeItem(SCAN_HISTORY_KEY);
+    }
   }, []);
 
   useEffect(() => {
@@ -412,7 +438,7 @@ export default function Dashboard() {
     };
   }, [previewUrl]);
 
-  function handleWaitlistSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleWaitlistSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = waitlistEmail.trim();
 
@@ -421,25 +447,42 @@ export default function Dashboard() {
       return;
     }
 
+    const endpoint = process.env.NEXT_PUBLIC_FORMSPREE_ENDPOINT;
+    if (!endpoint) {
+      setWaitlistError("Waitlist form is not configured yet. Please try again later.");
+      return;
+    }
+
     setWaitlistError(null);
-    setWaitlistEmails((prev) => [...prev, trimmed]);
-    setWaitlistSubmitted(true);
-    console.log("[ToRay waitlist]", trimmed, { all: [...waitlistEmails, trimmed] });
+    setIsWaitlistSubmitting(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("email", trimmed);
+
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error("Formspree submission failed");
+      }
+
+      setWaitlistSubmitted(true);
+    } catch {
+      setWaitlistError("We could not save your email. Please check your connection and try again.");
+    } finally {
+      setIsWaitlistSubmitting(false);
+    }
   }
 
   function scrollToWaitlist() {
     document.getElementById("waitlist")?.scrollIntoView({ behavior: "smooth" });
   }
 
-  function clearScanTimers() {
-    if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
-    if (stepTimerRef.current) clearInterval(stepTimerRef.current);
-    scanTimerRef.current = null;
-    stepTimerRef.current = null;
-  }
-
-  function runFakeScan(file: File) {
-    if (outOfScans) return;
+  async function runBillingScan(file: File) {
     if (!ALLOWED_TYPES.has(file.type)) {
       setScanStatus("error");
       setScanMessage("PNG, JPEG or WebP only");
@@ -451,45 +494,99 @@ export default function Dashboard() {
       return;
     }
 
-    clearScanTimers();
     const objectUrl = URL.createObjectURL(file);
     setPreviewUrl(objectUrl);
     setScanStatus("scanning");
     setScanMessage(null);
     setScanStep(0);
 
-    stepTimerRef.current = setInterval(() => {
-      setScanStep((prev) => Math.min(prev + 1, SCAN_STEPS.length - 1));
-    }, SCAN_DURATION_MS / SCAN_STEPS.length);
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      setScanStep(1);
 
-    scanTimerRef.current = setTimeout(() => {
-      clearScanTimers();
-      const amount = generateFakeAmount(spent);
-      setSpent(amount);
+      const response = await fetch("/api/analyze-billing", {
+        method: "POST",
+        body: formData,
+      });
+      const result = (await response.json()) as {
+        service?: "OpenAI" | "Anthropic" | "Other" | null;
+        amountUsd?: number;
+        billingPeriod?: string | null;
+        confidence?: "high" | "medium" | "low";
+        error?: string;
+      };
+
+      if (
+        !response.ok ||
+        typeof result.amountUsd !== "number" ||
+        (result.service !== "OpenAI" && result.service !== "Anthropic")
+      ) {
+        throw new Error(
+          result.error ??
+            "We could not find a clear OpenAI or Anthropic USD total.",
+        );
+      }
+
+      setScanStep(2);
+      const amountUsd = result.amountUsd;
+      const serviceName: SupportedService =
+        result.service === "OpenAI" ? "OpenAI API" : "Anthropic API";
+      const existingAmount =
+        serviceAmounts[serviceName] ??
+        services.find((service) => service.name === serviceName)?.amount ??
+        0;
+      const scan: BillingScan = {
+        id: crypto.randomUUID(),
+        service: serviceName,
+        amountUsd,
+        billingPeriod: result.billingPeriod ?? null,
+        confidence: result.confidence ?? "medium",
+        scannedAt: new Date().toISOString(),
+      };
+
+      setServiceAmounts((current) => ({
+        ...current,
+        [serviceName]: amountUsd,
+      }));
+      setSpent((current) => current - existingAmount + amountUsd);
       setScanStatus("success");
-      setScanMessage(`Detected $${amount.toFixed(2)} — dashboard updated`);
-      setScansLeft((prev) => Math.max(prev - 1, 0));
+      setScanMessage(
+        `${serviceName} · $${amountUsd.toFixed(2)} saved to your dashboard`,
+      );
       setLastSyncedAt(
         new Date().toLocaleTimeString("en-US", {
           hour: "numeric",
           minute: "2-digit",
         }),
       );
-    }, SCAN_DURATION_MS);
+      setScanHistory((current) => {
+        const next = [scan, ...current].slice(0, 25);
+        window.localStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(next));
+        return next;
+      });
+    } catch (error) {
+      setScanStatus("error");
+      setScanMessage(
+        error instanceof Error
+          ? error.message
+          : "The billing scanner could not analyze this image.",
+      );
+    }
   }
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (file) runFakeScan(file);
+    if (file) void runBillingScan(file);
     event.target.value = "";
   }
 
   function handleDrop(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsDragging(false);
-    if (isScanning || outOfScans) return;
+    if (isScanning) return;
     const file = event.dataTransfer.files?.[0];
-    if (file) runFakeScan(file);
+    if (file) void runBillingScan(file);
   }
 
   return (
@@ -509,13 +606,14 @@ export default function Dashboard() {
 
           <div className="flex min-w-0 flex-1 items-center justify-end gap-4">
             <span className="hidden text-sm text-bone-muted lg:block">
-              Demo · {scansLeft} scan{scansLeft === 1 ? "" : "s"} left
+              Live scanner · OpenAI Vision
             </span>
             <div className="hidden max-w-xs md:block">
               <WaitlistForm
                 email={waitlistEmail}
                 onEmailChange={setWaitlistEmail}
                 submitted={waitlistSubmitted}
+                isSubmitting={isWaitlistSubmitting}
                 onSubmit={handleWaitlistSubmit}
                 variant="compact"
               />
@@ -564,6 +662,7 @@ export default function Dashboard() {
           email={waitlistEmail}
           onEmailChange={setWaitlistEmail}
           submitted={waitlistSubmitted}
+          isSubmitting={isWaitlistSubmitting}
           onSubmit={handleWaitlistSubmit}
         />
         {waitlistError && (
@@ -651,7 +750,9 @@ export default function Dashboard() {
                       <p className="mt-1 text-[13px] text-bone-muted">{service.type} · {service.renewal}</p>
                     </div>
                     <div className="shrink-0 text-right">
-                      <p className="font-medium tabular-nums text-bone">${service.amount.toFixed(2)}</p>
+                      <p className="font-medium tabular-nums text-bone">
+                        ${(serviceAmounts[service.name as SupportedService] ?? service.amount).toFixed(2)}
+                      </p>
                       <p className="text-[11px] text-bone-muted">{service.isUsageBased ? "This month" : "Monthly"}</p>
                     </div>
                   </li>
@@ -673,13 +774,15 @@ export default function Dashboard() {
             <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-8">
               <div className="flex items-center justify-between">
                 <Eyebrow>Quick scan</Eyebrow>
-                <span className="text-[12px] text-bone-muted">{scansLeft} of {FREE_SCANS} demo left</span>
+                <span className="text-[12px] text-mint">
+                  {scanHistory.length} saved locally
+                </span>
               </div>
 
               <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFileChange} />
 
               <div
-                onDragOver={(e) => { e.preventDefault(); if (!isScanning && !outOfScans) setIsDragging(true); }}
+                onDragOver={(e) => { e.preventDefault(); if (!isScanning) setIsDragging(true); }}
                 onDragLeave={() => setIsDragging(false)}
                 onDrop={handleDrop}
                 className={`relative mt-5 flex min-h-[260px] flex-col items-center justify-center overflow-hidden rounded-[24px] border border-dashed px-6 text-center transition duration-180 ${isDragging ? "border-sage-soft bg-sage/15" : "border-hairline bg-background/40"} ${isScanning ? "pointer-events-none" : ""}`}
@@ -690,27 +793,6 @@ export default function Dashboard() {
 
                 {isScanning ? (
                   <ScanLoader stepIndex={scanStep} />
-                ) : outOfScans ? (
-                  <div className="w-full max-w-xs">
-                    <div className="mb-4 flex justify-center">
-                      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-clay/20">
-                        <Lock className="h-6 w-6 text-clay" strokeWidth={1.5} />
-                      </div>
-                    </div>
-                    <h3 className="font-serif text-xl text-bone">Demo scans used up</h3>
-                    <p className="mt-2 text-[13px] leading-relaxed text-bone-muted">
-                      Join the waitlist to get notified when unlimited scans launch.
-                    </p>
-                    <div className="mt-5">
-                      <WaitlistForm
-                        email={waitlistEmail}
-                        onEmailChange={setWaitlistEmail}
-                        submitted={waitlistSubmitted}
-                        onSubmit={handleWaitlistSubmit}
-                        variant="default"
-                      />
-                    </div>
-                  </div>
                 ) : (
                   <>
                     {previewUrl && scanStatus === "success" ? (
@@ -723,14 +805,14 @@ export default function Dashboard() {
                         <ScanLine className={`h-6 w-6 transition-colors ${isDragging ? "text-sage-soft" : "text-sage-soft/70"}`} strokeWidth={1.5} />
                       </div>
                     )}
-                    <h3 className="mt-3 font-serif text-xl text-bone">Closed beta demo</h3>
+                    <h3 className="mt-3 font-serif text-xl text-bone">Scan a billing screenshot</h3>
                     <p className="mt-2 max-w-[280px] text-[13px] leading-relaxed text-bone-muted">
-                      The AI auto-analysis feature is currently in closed beta. Drop a screenshot below to experience (simulate) the demo&apos;s loading speed and the beauty of its visualization.
+                      Upload an OpenAI or Anthropic usage screen. It is sent securely to OpenAI Vision for analysis and is not stored by ToRay.
                     </p>
                     <button type="button" onClick={() => fileInputRef.current?.click()} className="mt-6 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow">
                       Choose file
                     </button>
-                    <p className="mt-4 text-[11px] tracking-wide text-bone-muted/70">PNG / JPG — Max 10MB · Never leaves your browser</p>
+                    <p className="mt-4 text-[11px] tracking-wide text-bone-muted/70">PNG / JPG — Max 10MB · Saved totals stay in this browser</p>
                   </>
                 )}
               </div>
@@ -775,6 +857,7 @@ export default function Dashboard() {
                   email={waitlistEmail}
                   onEmailChange={setWaitlistEmail}
                   submitted={waitlistSubmitted}
+                  isSubmitting={isWaitlistSubmitting}
                   onSubmit={handleWaitlistSubmit}
                   variant="default"
                 />
