@@ -315,8 +315,9 @@ function ValidationPhaseBanner({
           </div>
 
           <p className="mt-4 text-[15px] leading-relaxed text-bone/90">
-            ToRay is currently an interactive UI concept. We only build features
-            that engineers actually want to use.
+            ToRay is in early access. The billing scanner is live for OpenAI and
+            Anthropic usage screenshots while we validate which integrations
+            engineers want next.
           </p>
           <p className="mt-3 text-[14px] leading-relaxed text-bone-muted">
             If you want us to fully build and launch this smart screenshot
