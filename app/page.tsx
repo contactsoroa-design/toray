@@ -4,11 +4,13 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   BellRing,
   Check,
+  PencilLine,
   Plus,
   RefreshCw,
   Radar,
   ScanLine,
   Star,
+  X,
 } from "lucide-react";
 
 const BUDGET = 200;
@@ -373,6 +375,129 @@ function ScanLoader({ stepIndex }: { stepIndex: number }) {
   );
 }
 
+function ManualCorrectionModal({
+  amount,
+  period,
+  service,
+  onAmountChange,
+  onPeriodChange,
+  onServiceChange,
+  onClose,
+  onSave,
+  error,
+}: {
+  amount: string;
+  period: string;
+  service: SupportedService;
+  onAmountChange: (value: string) => void;
+  onPeriodChange: (value: string) => void;
+  onServiceChange: (value: SupportedService) => void;
+  onClose: () => void;
+  onSave: (event: FormEvent<HTMLFormElement>) => void;
+  error: string | null;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 px-5 py-8 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="manual-correction-title"
+    >
+      <form
+        onSubmit={onSave}
+        className="w-full max-w-md rounded-[28px] border border-hairline bg-surface p-6 shadow-2xl md:p-8"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <Eyebrow>Manual correction</Eyebrow>
+            <h2
+              id="manual-correction-title"
+              className="mt-2 font-serif text-2xl tracking-[-0.02em] text-bone"
+            >
+              Set the amount yourself
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-bone-muted">
+              Use this if a screenshot is unclear or the detected value needs a
+              correction.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-2 text-bone-muted transition hover:bg-bone/10 hover:text-bone"
+            aria-label="Close manual correction"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="mt-6 grid gap-4">
+          <label className="grid gap-1.5 text-sm text-bone-muted">
+            Service
+            <select
+              value={service}
+              onChange={(event) =>
+                onServiceChange(event.target.value as SupportedService)
+              }
+              className="rounded-xl border border-hairline bg-background px-3 py-2.5 text-bone outline-none transition focus:border-sage-soft/60 focus:ring-2 focus:ring-sage/20"
+            >
+              <option value="OpenAI API">OpenAI API</option>
+              <option value="Anthropic API">Anthropic API</option>
+            </select>
+          </label>
+
+          <label className="grid gap-1.5 text-sm text-bone-muted">
+            Current-period total (USD)
+            <div className="flex rounded-xl border border-hairline bg-background transition focus-within:border-sage-soft/60 focus-within:ring-2 focus-within:ring-sage/20">
+              <span className="flex items-center pl-3 text-bone-muted">$</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                required
+                value={amount}
+                onChange={(event) => onAmountChange(event.target.value)}
+                placeholder="0.00"
+                className="w-full bg-transparent px-2 py-2.5 text-bone outline-none placeholder:text-bone-muted/50"
+              />
+            </div>
+          </label>
+
+          <label className="grid gap-1.5 text-sm text-bone-muted">
+            Billing period <span className="text-bone-muted/60">(optional)</span>
+            <input
+              type="text"
+              value={period}
+              onChange={(event) => onPeriodChange(event.target.value)}
+              placeholder="e.g. Jul 1 – Jul 31, 2026"
+              className="rounded-xl border border-hairline bg-background px-3 py-2.5 text-bone outline-none transition placeholder:text-bone-muted/50 focus:border-sage-soft/60 focus:ring-2 focus:ring-sage/20"
+            />
+          </label>
+        </div>
+
+        <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full px-5 py-2.5 text-sm font-medium text-bone-muted transition hover:text-bone"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="inline-flex items-center justify-center gap-2 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition hover:bg-sage-glow"
+          >
+            <Check className="h-4 w-4" />
+            Save amount
+          </button>
+        </div>
+        {error && <p className="mt-3 text-sm text-warning">{error}</p>}
+      </form>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -392,6 +517,12 @@ export default function Dashboard() {
   const [waitlistSubmitted, setWaitlistSubmitted] = useState(false);
   const [isWaitlistSubmitting, setIsWaitlistSubmitting] = useState(false);
   const [waitlistError, setWaitlistError] = useState<string | null>(null);
+  const [isManualCorrectionOpen, setIsManualCorrectionOpen] = useState(false);
+  const [manualService, setManualService] =
+    useState<SupportedService>("OpenAI API");
+  const [manualAmount, setManualAmount] = useState("");
+  const [manualPeriod, setManualPeriod] = useState("");
+  const [manualError, setManualError] = useState<string | null>(null);
 
   const animatedSpent = useAnimatedNumber(spent);
   const spentRatio = Math.min((animatedSpent / BUDGET) * 100, 100);
@@ -483,6 +614,72 @@ export default function Dashboard() {
     document.getElementById("waitlist")?.scrollIntoView({ behavior: "smooth" });
   }
 
+  function saveBillingScan(scan: BillingScan) {
+    const existingAmount =
+      serviceAmounts[scan.service] ??
+      services.find((service) => service.name === scan.service)?.amount ??
+      0;
+
+    setServiceAmounts((current) => ({
+      ...current,
+      [scan.service]: scan.amountUsd,
+    }));
+    setSpent((current) => current - existingAmount + scan.amountUsd);
+    setScanHistory((current) => {
+      const next = [scan, ...current].slice(0, 25);
+      window.localStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function openManualCorrection(
+    service: SupportedService = "OpenAI API",
+    amount?: number,
+    period?: string | null,
+  ) {
+    const currentAmount =
+      amount ??
+      serviceAmounts[service] ??
+      services.find((item) => item.name === service)?.amount ??
+      0;
+
+    setManualService(service);
+    setManualAmount(currentAmount.toFixed(2));
+    setManualPeriod(period ?? "");
+    setManualError(null);
+    setIsManualCorrectionOpen(true);
+  }
+
+  function saveManualCorrection(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const amount = Number.parseFloat(manualAmount);
+
+    if (!Number.isFinite(amount) || amount < 0) {
+      setManualError("Enter a valid USD amount of zero or more.");
+      return;
+    }
+
+    saveBillingScan({
+      id: crypto.randomUUID(),
+      service: manualService,
+      amountUsd: Math.round(amount * 100) / 100,
+      billingPeriod: manualPeriod.trim() || null,
+      confidence: "high",
+      scannedAt: new Date().toISOString(),
+    });
+    setLastSyncedAt(
+      new Date().toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+      }),
+    );
+    setScanStatus("success");
+    setScanMessage(
+      `${manualService} · $${amount.toFixed(2)} saved from manual correction`,
+    );
+    setIsManualCorrectionOpen(false);
+  }
+
   async function runBillingScan(file: File) {
     if (!ALLOWED_TYPES.has(file.type)) {
       setScanStatus("error");
@@ -533,10 +730,6 @@ export default function Dashboard() {
       const amountUsd = result.amountUsd;
       const serviceName: SupportedService =
         result.service === "OpenAI" ? "OpenAI API" : "Anthropic API";
-      const existingAmount =
-        serviceAmounts[serviceName] ??
-        services.find((service) => service.name === serviceName)?.amount ??
-        0;
       const scan: BillingScan = {
         id: crypto.randomUUID(),
         service: serviceName,
@@ -546,11 +739,7 @@ export default function Dashboard() {
         scannedAt: new Date().toISOString(),
       };
 
-      setServiceAmounts((current) => ({
-        ...current,
-        [serviceName]: amountUsd,
-      }));
-      setSpent((current) => current - existingAmount + amountUsd);
+      saveBillingScan(scan);
       setScanStatus("success");
       setScanMessage(
         `${serviceName} · $${amountUsd.toFixed(2)} saved to your dashboard`,
@@ -561,11 +750,6 @@ export default function Dashboard() {
           minute: "2-digit",
         }),
       );
-      setScanHistory((current) => {
-        const next = [scan, ...current].slice(0, 25);
-        window.localStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(next));
-        return next;
-      });
     } catch (error) {
       setScanStatus("error");
       setScanMessage(
@@ -813,23 +997,40 @@ export default function Dashboard() {
                     <button type="button" onClick={() => fileInputRef.current?.click()} className="mt-6 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow">
                       Choose file
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => openManualCorrection()}
+                      className="mt-3 inline-flex items-center gap-1.5 text-[13px] text-sage-soft underline-offset-4 transition hover:text-bone hover:underline"
+                    >
+                      <PencilLine className="h-3.5 w-3.5" />
+                      Enter an amount manually
+                    </button>
                     <p className="mt-4 text-[11px] tracking-wide text-bone-muted/70">PNG / JPG — Max 10MB · Saved totals stay in this browser</p>
                   </>
                 )}
               </div>
 
               {scanMessage && (
-                <p className={`mt-4 text-[13px] ${scanStatus === "error" ? "text-warning" : scanStatus === "success" ? "text-mint" : "text-bone-muted"}`}>
-                  {scanMessage}
-                  {scanStatus === "success" && !waitlistSubmitted && (
-                    <>
-                      {" "}
-                      <button type="button" onClick={scrollToWaitlist} className="text-sage-soft underline-offset-4 hover:underline">
-                        Join the waitlist for launch →
-                      </button>
-                    </>
-                  )}
-                </p>
+                <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <p className={`text-[13px] ${scanStatus === "error" ? "text-warning" : scanStatus === "success" ? "text-mint" : "text-bone-muted"}`}>
+                    {scanMessage}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const latestScan = scanHistory[0];
+                      openManualCorrection(
+                        latestScan?.service,
+                        latestScan?.amountUsd,
+                        latestScan?.billingPeriod,
+                      );
+                    }}
+                    className="inline-flex items-center gap-1 text-[13px] text-sage-soft underline-offset-4 transition hover:text-bone hover:underline"
+                  >
+                    <PencilLine className="h-3.5 w-3.5" />
+                    {scanStatus === "success" ? "Correct amount" : "Enter manually"}
+                  </button>
+                </div>
               )}
             </div>
 
@@ -887,6 +1088,20 @@ export default function Dashboard() {
           <span>All spend data stays in your browser</span>
         </div>
       </footer>
+
+      {isManualCorrectionOpen && (
+        <ManualCorrectionModal
+          amount={manualAmount}
+          period={manualPeriod}
+          service={manualService}
+          onAmountChange={setManualAmount}
+          onPeriodChange={setManualPeriod}
+          onServiceChange={setManualService}
+          onClose={() => setIsManualCorrectionOpen(false)}
+          onSave={saveManualCorrection}
+          error={manualError}
+        />
+      )}
     </div>
   );
 }

@@ -133,19 +133,26 @@ export async function POST(request: Request) {
       },
       messages: [
         {
+          role: "system",
+          content: [
+            "You are ToRay's precision billing-screen OCR engine.",
+            "Your sole task is to extract a single AI provider's current-period total usage charge from a screenshot.",
+            "Supported sources include OpenAI Platform Usage/Billing and Anthropic Console usage or billing screens in any layout, including dark mode, light mode, English, and Japanese.",
+            "First identify the provider from explicit visual evidence such as its product name, logo, domain, navigation, or billing labels. Never infer a provider from the amount alone.",
+            "For amountUsd, select only the explicit total spend, total usage, total cost, or current-period usage charge for the selected billing period.",
+            "Do not return an account credit, prepaid balance, payment due, available balance, tax, plan price, projected cost, daily cost, or an individual model/line-item cost when a period total is present.",
+            "If several date ranges are visible, use the currently selected billing period or the period directly associated with the total spend. Copy that period exactly into billingPeriod.",
+            "Accept USD symbols and localized number formatting. Convert only a clearly USD-denominated amount to a plain JSON number; do not convert other currencies.",
+            "If the provider, period, or total is ambiguous, obscured, cropped, or absent, return null for that field and set confidence to low. Never guess or calculate a total by adding line items.",
+            "Return only data that matches the provided JSON schema.",
+          ].join("\n"),
+        },
+        {
           role: "user",
           content: [
             {
               type: "text",
-              text: [
-                "Analyze this AI-provider billing or usage screenshot.",
-                "Identify the provider as OpenAI, Anthropic, Other, or null.",
-                "Extract only the current billing period's total usage amount in USD.",
-                "Do not sum separate model line items when an explicit total is visible.",
-                "Do not convert non-USD amounts and never guess.",
-                "Use null for values you cannot read confidently.",
-                "Return the billing period exactly as visible when present.",
-              ].join("\n"),
+              text: "Analyze the attached billing screenshot now.",
             },
             {
               type: "image_url",
