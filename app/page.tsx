@@ -59,6 +59,7 @@ import {
 } from "@/lib/plan-limits";
 import {
   isVisionProvider,
+  foundingVisionUnlockLabel,
   visionProviderToToolName,
 } from "@/lib/vision-providers";
 import { createClient } from "@/lib/supabase/client";
@@ -241,7 +242,7 @@ const PRO_FEATURES = [
   },
   {
     icon: ScanLine,
-    text: "Gemini & Grok Vision — AI Studio / xAI billing screenshots",
+    text: "Pro Vision — Gemini, Grok, Cursor, Copilot billing screenshots",
   },
   {
     icon: Radar,
@@ -560,7 +561,7 @@ function SignInModal({
               </li>
               <li className="flex gap-2">
                 <X className="mt-0.5 h-3.5 w-3.5 shrink-0 text-bone-muted/70" />
-                Does not unlock Outlook, Stack Pulse, or Gemini/Grok Vision
+                Does not unlock Outlook, Stack Pulse, or Pro Vision
               </li>
             </ul>
           </div>
@@ -1177,7 +1178,7 @@ export default function Dashboard() {
           writeFounding(true);
           if (result.matchesSignedInUser) {
             setFoundingVerifyMessage(
-              "ToRay Pro verified — Gemini & Grok Vision are unlocked.",
+              "ToRay Pro verified — Pro Vision providers are unlocked.",
             );
           } else if (result.email) {
             setFoundingVerifyMessage(
@@ -1854,18 +1855,20 @@ export default function Dashboard() {
       };
 
       if (response.status === 402 || result.code === "FOUNDING_REQUIRED") {
-        const hinted =
-          result.service === "Gemini"
-            ? "Gemini API"
-            : result.service === "Grok"
-              ? "Grok"
-              : "Gemini API";
+        const hinted = isVisionProvider(result.service)
+          ? foundingVisionUnlockLabel(result.service)
+          : "Gemini API";
         setScanStatus("error");
         setScanMessage(
           result.error ??
-            "Gemini and Grok Vision is included with ToRay Pro — $12/mo. Enter the amount manually within your free tool limit, or upgrade.",
+            "Pro Vision (Gemini, Grok, Cursor, Copilot) is included with ToRay Pro — $12/mo. Enter the amount manually within your free tool limit, or upgrade.",
         );
-        openManualCorrection(hinted, undefined, null, { custom: false });
+        openManualCorrection(
+          hinted,
+          typeof result.amountUsd === "number" ? result.amountUsd : undefined,
+          result.billingPeriod ?? null,
+          { custom: false },
+        );
         document
           .getElementById("founding-member")
           ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -1878,12 +1881,10 @@ export default function Dashboard() {
         result.confidence === "low" ||
         !isVisionProvider(result.service)
       ) {
-        throw new Error(
-          result.error ??
-            isFounding
-              ? "This does not look like a clear supported billing screen. Use Add tool to enter any provider manually."
-              : "This does not look like a clear supported billing screen. Set a preset amount, or upgrade for custom tools.",
-        );
+        const fallback = isFounding
+          ? "This does not look like a clear supported billing screen. Use Add tool to enter any provider manually."
+          : "This does not look like a clear supported billing screen. Set a preset amount, or upgrade for custom tools.";
+        throw new Error(result.error ?? fallback);
       }
 
       setScanStep(2);
@@ -2088,7 +2089,7 @@ export default function Dashboard() {
                 {isLoggedIn && !isFounding && (
                   <p className="mt-1 text-[12px] text-bone-muted">
                     Sign-in ≠ Pro. Upgrade separately for outlook, Stack Pulse,
-                    CSV, and Gemini/Grok Vision.
+                    CSV, and Pro Vision (Gemini/Grok/Cursor/Copilot).
                   </p>
                 )}
               </div>
@@ -2145,8 +2146,8 @@ export default function Dashboard() {
             <p className="mt-4 max-w-md text-[15px] leading-relaxed text-bone-muted">
               Free: scan OpenAI or Anthropic, track up to {FREE_TOOL_LIMIT}{" "}
               presets, and set a budget up to ${FREE_BUDGET_CAP}/mo. ToRay Pro
-              unlocks custom tools, unlimited tracking & budget, Gemini/Grok
-              Vision, outlook, Stack Pulse, and CSV.
+              unlocks custom tools, unlimited tracking & budget, Pro Vision
+              (Gemini/Grok/Cursor/Copilot), outlook, Stack Pulse, and CSV.
             </p>
             <p className="mt-3 text-[13px] text-bone-muted">
               Screenshots are analyzed securely and not stored by ToRay. Totals
@@ -2202,8 +2203,8 @@ export default function Dashboard() {
                   <h2 className="mt-2 font-serif text-xl text-bone">Drop a billing screenshot</h2>
                   <p className="mt-2 max-w-[280px] text-[13px] leading-relaxed text-bone-muted">
                     {isFounding
-                      ? "OpenAI, Anthropic, Gemini, or Grok billing consoles — Vision unlocked."
-                      : `OpenAI / Anthropic Vision free · up to ${FREE_TOOL_LIMIT} tools. Gemini/Grok Vision + unlimited tools with ToRay Pro.`}
+                      ? "OpenAI, Anthropic, Gemini, Grok, Cursor, or Copilot billing — Vision unlocked."
+                      : `OpenAI / Anthropic Vision free · up to ${FREE_TOOL_LIMIT} presets. Pro Vision (Gemini/Grok/Cursor/Copilot) + unlimited tools with ToRay Pro.`}
                   </p>
                   <button type="button" onClick={() => fileInputRef.current?.click()} className="mt-5 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition hover:bg-sage-glow">
                     Choose file
@@ -2767,7 +2768,9 @@ export default function Dashboard() {
                             (service.name === "OpenAI API" ||
                               service.name === "Anthropic API" ||
                               ((service.name === "Gemini API" ||
-                                service.name === "Grok") &&
+                                service.name === "Grok" ||
+                                service.name === "Cursor Pro" ||
+                                service.name === "GitHub Copilot") &&
                                 isFounding))
                               ? "Scan or edit"
                               : "Set amount"}
@@ -2828,7 +2831,7 @@ export default function Dashboard() {
               </div>
               <p className="mt-3 text-[14px] leading-relaxed text-bone-muted">
                 {isFounding
-                  ? "Thank you — ToRay Pro is active. Unlimited tools & budget, Gemini/Grok Vision, outlook, Stack Pulse, and CSV are unlocked."
+                  ? "Thank you — ToRay Pro is active. Unlimited tools & budget, Pro Vision, outlook, Stack Pulse, and CSV are unlocked."
                   : `Free: OpenAI/Anthropic Vision, ${FREE_TOOL_LIMIT} presets, budgets up to $${FREE_BUDGET_CAP}/mo. ${FOUNDING_PLAN_LABEL} unlocks custom tools and the full operating view.`}
               </p>
               {foundingVerifyMessage && (
@@ -2969,8 +2972,7 @@ export default function Dashboard() {
             <p className="mt-1 text-sm text-bone-muted">
               Free stops at {FREE_TOOL_LIMIT} presets and ${FREE_BUDGET_CAP}{" "}
               budgets, and locks custom tools, outlook, Stack Pulse, CSV, and
-              Gemini/Grok Vision. {FOUNDING_PLAN_LABEL} at $12/mo unlocks the
-              rest.
+              Pro Vision. {FOUNDING_PLAN_LABEL} at $12/mo unlocks the rest.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <a

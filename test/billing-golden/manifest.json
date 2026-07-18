@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "description": "Golden cases for ToRay billing screenshot classification + OCR.",
   "baseUrlEnv": "BILLING_EVAL_BASE_URL",
   "defaultBaseUrl": "http://localhost:3000",
@@ -17,6 +17,18 @@
       }
     },
     {
+      "id": "openai-cost-page-variant",
+      "file": "fixtures/openai-cost-page-variant.png",
+      "notes": "OpenAI Usage/Costs layout variant.",
+      "expect": {
+        "accept": true,
+        "service": "OpenAI",
+        "amountUsd": 63.18,
+        "amountTolerance": 0.05,
+        "allowedConfidence": ["high", "medium"]
+      }
+    },
+    {
       "id": "anthropic-console-total",
       "file": "fixtures/anthropic-console-total.png",
       "notes": "Synthetic Anthropic Console usage/billing screen with period total.",
@@ -26,6 +38,74 @@
         "amountUsd": 87.4,
         "amountTolerance": 0.05,
         "allowedConfidence": ["high", "medium"]
+      }
+    },
+    {
+      "id": "gemini-ai-studio-total",
+      "file": "fixtures/gemini-ai-studio-total.png",
+      "notes": "Gemini AI Studio — Pro Vision. Eval with BILLING_EVAL_ALLOW_FOUNDING=1.",
+      "expect": {
+        "accept": true,
+        "service": "Gemini",
+        "amountUsd": 64.2,
+        "amountTolerance": 0.05,
+        "allowedConfidence": ["high", "medium"],
+        "requiresFounding": true
+      }
+    },
+    {
+      "id": "grok-xai-console-total",
+      "file": "fixtures/grok-xai-console-total.png",
+      "notes": "xAI / Grok API console — Pro Vision.",
+      "expect": {
+        "accept": true,
+        "service": "Grok",
+        "amountUsd": 51.75,
+        "amountTolerance": 0.05,
+        "allowedConfidence": ["high", "medium"],
+        "requiresFounding": true
+      }
+    },
+    {
+      "id": "cursor-usage-total",
+      "file": "fixtures/cursor-usage-total.png",
+      "notes": "Cursor billing/usage — Pro Vision.",
+      "expect": {
+        "accept": true,
+        "service": "Cursor",
+        "amountUsd": 38.9,
+        "amountTolerance": 0.05,
+        "allowedConfidence": ["high", "medium"],
+        "requiresFounding": true
+      }
+    },
+    {
+      "id": "copilot-billing-total",
+      "file": "fixtures/copilot-billing-total.png",
+      "notes": "GitHub Copilot billing — Pro Vision.",
+      "expect": {
+        "accept": true,
+        "service": "Copilot",
+        "amountUsd": 29,
+        "amountTolerance": 0.05,
+        "allowedConfidence": ["high", "medium"],
+        "requiresFounding": true
+      }
+    },
+    {
+      "id": "openai-jpy-reject",
+      "file": "fixtures/openai-jpy-reject.png",
+      "notes": "OpenAI chrome but JPY total — must reject (USD only).",
+      "expect": {
+        "accept": false
+      }
+    },
+    {
+      "id": "openai-credits-only-reject",
+      "file": "fixtures/openai-credits-only-reject.png",
+      "notes": "Credits remaining without period total — must reject.",
+      "expect": {
+        "accept": false
       }
     },
     {

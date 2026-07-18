@@ -27,6 +27,17 @@ write("openai-platform-total.png", 960, 600, (g) => {
   g.text(40, 430, "gpt-4o $88.20   gpt-4.1 $54.30", [142, 142, 142], 2);
 });
 
+write("openai-cost-page-variant.png", 960, 600, (g) => {
+  g.fill(0, 0, 960, 600, [10, 10, 12]);
+  g.text(40, 36, "OpenAI", [255, 255, 255], 3);
+  g.text(40, 90, "platform.openai.com/usage", [142, 142, 142], 2);
+  g.text(40, 150, "Costs", [255, 255, 255], 3);
+  g.text(40, 210, "Jul 1 – Jul 18, 2026", [200, 200, 200], 2);
+  g.text(40, 280, "Total usage cost", [180, 180, 180], 2);
+  g.text(40, 330, "$63.18", [16, 163, 127], 5);
+  g.text(40, 420, "Daily costs chart", [100, 100, 100], 2);
+});
+
 write("anthropic-console-total.png", 960, 600, (g) => {
   g.fill(0, 0, 960, 600, [11, 15, 25]);
   g.text(40, 36, "Anthropic Console", [255, 255, 255], 3);
@@ -36,6 +47,65 @@ write("anthropic-console-total.png", 960, 600, (g) => {
   g.text(40, 280, "$87.40", [52, 211, 153], 5);
   g.text(40, 370, "Credits remaining: $500.00", [156, 163, 175], 2);
   g.text(40, 420, "claude-opus-4: $12.10", [156, 163, 175], 2);
+});
+
+write("gemini-ai-studio-total.png", 960, 600, (g) => {
+  g.fill(0, 0, 960, 600, [32, 33, 36]);
+  g.text(40, 36, "Google AI Studio", [255, 255, 255], 3);
+  g.text(40, 90, "aistudio.google.com  Usage  Billing", [156, 163, 175], 2);
+  g.text(40, 160, "Gemini API · Jul 1 - Jul 31, 2026", [229, 231, 235], 2);
+  g.text(40, 230, "Total cost", [255, 255, 255], 2);
+  g.text(40, 280, "$64.20", [138, 180, 248], 5);
+  g.text(40, 370, "gemini-2.5-pro $41.00   flash $23.20", [156, 163, 175], 2);
+});
+
+write("grok-xai-console-total.png", 960, 600, (g) => {
+  g.fill(0, 0, 960, 600, [8, 8, 8]);
+  g.text(40, 36, "xAI Console", [255, 255, 255], 3);
+  g.text(40, 90, "console.x.ai  Usage  Billing", [160, 160, 160], 2);
+  g.text(40, 160, "Grok API · Current period Jul 2026", [220, 220, 220], 2);
+  g.text(40, 230, "Total usage", [255, 255, 255], 2);
+  g.text(40, 280, "$51.75", [255, 255, 255], 5);
+  g.text(40, 370, "Credits $100.00 remaining", [140, 140, 140], 2);
+});
+
+write("cursor-usage-total.png", 960, 600, (g) => {
+  g.fill(0, 0, 960, 600, [20, 20, 22]);
+  g.text(40, 36, "Cursor Settings", [255, 255, 255], 3);
+  g.text(40, 90, "cursor.com/settings  Billing  Usage", [160, 160, 170], 2);
+  g.text(40, 160, "Cursor Pro · Usage this period", [220, 220, 220], 2);
+  g.text(40, 230, "Total spend", [255, 255, 255], 2);
+  g.text(40, 280, "$38.90", [120, 200, 255], 5);
+  g.text(40, 370, "On-demand usage beyond included requests", [140, 140, 150], 2);
+});
+
+write("copilot-billing-total.png", 960, 600, (g) => {
+  g.fill(0, 0, 960, 600, [246, 248, 250]);
+  g.text(40, 36, "GitHub", [36, 41, 47], 3);
+  g.text(40, 90, "github.com/settings/billing  Copilot", [87, 96, 106], 2);
+  g.text(40, 160, "GitHub Copilot Business · Current period", [36, 41, 47], 2);
+  g.text(40, 230, "Total usage cost", [36, 41, 47], 2);
+  g.text(40, 280, "$29.00", [26, 127, 55], 5);
+  g.text(40, 370, "Premium requests overage", [87, 96, 106], 2);
+});
+
+write("openai-jpy-reject.png", 960, 600, (g) => {
+  g.fill(0, 0, 960, 600, [13, 13, 13]);
+  g.text(40, 36, "OpenAI Platform", [255, 255, 255], 3);
+  g.text(40, 90, "platform.openai.com/billing", [142, 142, 142], 2);
+  g.text(40, 160, "Billing period: Jul 2026", [229, 231, 235], 2);
+  g.text(40, 230, "Total spend", [255, 255, 255], 2);
+  g.text(40, 280, "¥21,400", [16, 163, 127], 5);
+  g.text(40, 370, "Currency: JPY — must reject (USD only)", [142, 142, 142], 2);
+});
+
+write("openai-credits-only-reject.png", 960, 600, (g) => {
+  g.fill(0, 0, 960, 600, [13, 13, 13]);
+  g.text(40, 36, "OpenAI Platform", [255, 255, 255], 3);
+  g.text(40, 90, "platform.openai.com/billing", [142, 142, 142], 2);
+  g.text(40, 180, "Credits remaining", [255, 255, 255], 2);
+  g.text(40, 240, "$250.00", [16, 163, 127], 5);
+  g.text(40, 330, "No period total shown — must reject", [142, 142, 142], 2);
 });
 
 write("chatgpt-plus-settings.png", 960, 600, (g) => {

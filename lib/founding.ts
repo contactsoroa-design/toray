@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export {
   FOUNDING_VISION_PROVIDERS,
   FREE_VISION_PROVIDERS,
+  foundingVisionUnlockLabel,
   isVisionProvider,
   visionProviderToToolName,
   type VisionProvider,

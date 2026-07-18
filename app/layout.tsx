@@ -23,7 +23,7 @@ const fraunces = Fraunces({
 export const metadata: Metadata = {
   title: "ToRay — Free Instant AI Billing Scanner",
   description:
-    "Scan OpenAI and Anthropic billing screenshots free (up to 3 tools, budgets to $400/mo). ToRay Pro at $12/mo unlocks unlimited tools & budget, Gemini/Grok Vision, month-end outlook, Stack Pulse, and CSV export.",
+    "Scan OpenAI and Anthropic billing screenshots free (up to 3 tools, budgets to $400/mo). ToRay Pro at $12/mo unlocks unlimited tools & budget, Pro Vision (Gemini/Grok/Cursor/Copilot), month-end outlook, Stack Pulse, and CSV export.",
 };
 
 export default function RootLayout({
