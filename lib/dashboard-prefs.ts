@@ -4,6 +4,17 @@ export const BUDGET_KEY = "toray-monthly-budget";
 export const HIDDEN_TOOLS_KEY = "toray-hidden-tools";
 export const CUSTOM_TOOLS_KEY = "toray-custom-tools";
 export const FOUNDING_KEY = "toray-founding-member";
+export const CATALOG_SEEDED_KEY = "toray-catalog-seeded";
+
+/** Presets hidden on first visit so the dashboard starts focused. */
+export const DEFAULT_HIDDEN_PRESETS = [
+  "Claude Pro",
+  "Midjourney",
+  "Runway",
+  "ElevenLabs",
+  "GitHub Copilot",
+  "Perplexity Pro",
+] as const;
 
 export type CustomToolPref = {
   name: string;
@@ -30,10 +41,28 @@ export function readLocalPrefs(): DashboardPrefs {
 
   return {
     budget: readBudget(),
-    hiddenTools: readJsonArray(HIDDEN_TOOLS_KEY),
+    hiddenTools: readHiddenToolsWithStarterDefaults(),
     customTools: readCustomTools(),
     isFounding: window.localStorage.getItem(FOUNDING_KEY) === "1",
   };
+}
+
+/** First visit only: seed a compact catalog. Never overwrite an existing preference. */
+function readHiddenToolsWithStarterDefaults(): string[] {
+  if (window.localStorage.getItem(CATALOG_SEEDED_KEY) === "1") {
+    return readJsonArray(HIDDEN_TOOLS_KEY);
+  }
+
+  const existingRaw = window.localStorage.getItem(HIDDEN_TOOLS_KEY);
+  if (existingRaw !== null) {
+    window.localStorage.setItem(CATALOG_SEEDED_KEY, "1");
+    return readJsonArray(HIDDEN_TOOLS_KEY);
+  }
+
+  const starter = [...DEFAULT_HIDDEN_PRESETS];
+  window.localStorage.setItem(HIDDEN_TOOLS_KEY, JSON.stringify(starter));
+  window.localStorage.setItem(CATALOG_SEEDED_KEY, "1");
+  return starter;
 }
 
 export function readBudget(): number | null {

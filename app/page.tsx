@@ -10,6 +10,7 @@ import {
   Radar,
   ScanLine,
   Shield,
+  Trash2,
   X,
 } from "lucide-react";
 import {
@@ -584,6 +585,8 @@ function ManualCorrectionModal({
   onUsageBasedChange,
   onClose,
   onSave,
+  onClear,
+  canClear,
   error,
 }: {
   amount: string;
@@ -601,6 +604,8 @@ function ManualCorrectionModal({
   onUsageBasedChange: (value: boolean) => void;
   onClose: () => void;
   onSave: (event: FormEvent<HTMLFormElement>) => void;
+  onClear?: () => void;
+  canClear?: boolean;
   error: string | null;
 }) {
   return (
@@ -742,27 +747,47 @@ function ManualCorrectionModal({
           </label>
         </div>
 
-        <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full px-5 py-2.5 text-sm font-medium text-bone-muted transition hover:text-bone"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className="inline-flex items-center justify-center gap-2 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition hover:bg-sage-glow"
-          >
-            <Check className="h-4 w-4" />
-            Save amount
-          </button>
+        <div className="mt-7 flex flex-col gap-3">
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full px-5 py-2.5 text-sm font-medium text-bone-muted transition hover:text-bone"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="inline-flex items-center justify-center gap-2 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition hover:bg-sage-glow"
+            >
+              <Check className="h-4 w-4" />
+              Save amount
+            </button>
+          </div>
+          {canClear && onClear && (
+            <button
+              type="button"
+              onClick={onClear}
+              className="inline-flex items-center justify-center gap-1.5 text-[13px] text-warning underline-offset-4 transition hover:underline"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Remove from this month&apos;s total
+            </button>
+          )}
         </div>
         {error && <p className="mt-3 text-sm text-warning">{error}</p>}
       </form>
     </div>
   );
 }
+
+const QUICK_START_TOOLS = [
+  "Gemini API",
+  "Grok",
+  "Runway",
+  "ElevenLabs",
+  "Cursor Pro",
+] as const;
 
 export default function Dashboard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -821,11 +846,21 @@ export default function Dashboard() {
     return [...base, ...extras];
   })();
 
-  const visibleTools = catalog.filter(
-    (tool) =>
-      serviceAmounts[tool.name] !== undefined ||
-      !hiddenTools.includes(tool.name),
-  );
+  const visibleTools = catalog
+    .filter(
+      (tool) =>
+        serviceAmounts[tool.name] !== undefined ||
+        !hiddenTools.includes(tool.name),
+    )
+    .sort((a, b) => {
+      const aSet = serviceAmounts[a.name] !== undefined;
+      const bSet = serviceAmounts[b.name] !== undefined;
+      if (aSet !== bSet) return aSet ? -1 : 1;
+      if (aSet && bSet) {
+        return (serviceAmounts[b.name] ?? 0) - (serviceAmounts[a.name] ?? 0);
+      }
+      return a.name.localeCompare(b.name);
+    });
 
   const animatedSpent = useAnimatedNumber(spent);
   const projected = computeProjectedSpend(serviceAmounts, catalog);
@@ -1128,6 +1163,27 @@ export default function Dashboard() {
     }
   }
 
+  function clearTrackedTool(name: ServiceName) {
+    const existingAmount = serviceAmounts[name];
+    if (existingAmount === undefined) return;
+
+    setServiceAmounts((current) => {
+      const next = { ...current };
+      delete next[name];
+      return next;
+    });
+    setSpent((current) => Math.max(0, current - existingAmount));
+    setScanHistory((current) => {
+      const next = current.filter((scan) => scan.service !== name);
+      window.localStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+    markUpdated();
+    setScanStatus("success");
+    setScanMessage(`${name} removed from this month’s total`);
+    setIsManualCorrectionOpen(false);
+  }
+
   function findTool(name: ServiceName): ToolDef | undefined {
     return catalog.find((tool) => tool.name === name);
   }
@@ -1138,18 +1194,27 @@ export default function Dashboard() {
     period?: string | null,
     options?: { custom?: boolean },
   ) {
-    const tool = findTool(service);
+    const custom = Boolean(options?.custom);
+    const resolvedService = custom
+      ? service || "OpenAI API"
+      : service || "OpenAI API";
+    const tool = findTool(resolvedService);
     const suggested = tool?.suggestedAmount ?? 0;
-    const currentAmount = amount ?? serviceAmounts[service] ?? suggested;
+    const currentAmount =
+      amount ?? serviceAmounts[resolvedService] ?? (custom ? 0 : suggested);
 
-    setIsCustomMode(Boolean(options?.custom));
-    setCustomName(options?.custom ? "" : service);
-    setManualService(service);
+    setIsCustomMode(custom);
+    setCustomName(custom ? "" : resolvedService);
+    setManualService(resolvedService);
     setManualUsageBased(tool?.isUsageBased ?? true);
     setManualAmount(
-      currentAmount > 0 || amount !== undefined
+      amount !== undefined || serviceAmounts[resolvedService] !== undefined
         ? currentAmount.toFixed(2)
-        : "",
+        : custom
+          ? ""
+          : suggested > 0
+            ? suggested.toFixed(2)
+            : "",
     );
     setManualPeriod(period ?? "");
     setManualError(null);
@@ -1705,6 +1770,34 @@ export default function Dashboard() {
           </div>
         )}
 
+        {trackedCount >= 2 && isLoggedIn && !isFounding && (
+          <div className="mt-6 rounded-[24px] border border-clay/35 bg-clay/10 px-5 py-4 md:px-6">
+            <p className="font-serif text-lg text-bone">
+              You&apos;re relying on ToRay — lock the founding price?
+            </p>
+            <p className="mt-1 text-sm text-bone-muted">
+              Your dashboard is backed up. Founding Member keeps $12/mo locked and funds Gemini/Grok Vision scanning next. Still optional.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <a
+                href={stripeHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-full bg-sage px-4 py-2 text-sm font-medium text-bone transition hover:bg-sage-glow"
+              >
+                Become Founding Member — $12/mo
+              </a>
+              <button
+                type="button"
+                onClick={exportCsv}
+                className="rounded-full border border-hairline px-4 py-2 text-sm text-bone-muted transition hover:text-bone"
+              >
+                Or export CSV free
+              </button>
+            </div>
+          </div>
+        )}
+
         <section className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-5">
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-8 lg:col-span-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1729,7 +1822,9 @@ export default function Dashboard() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => openManualCorrection("Gemini API", undefined, null, { custom: false })}
+                  onClick={() =>
+                    openManualCorrection("", undefined, null, { custom: true })
+                  }
                   className="inline-flex items-center gap-1 text-sm text-sage-soft transition hover:text-bone"
                 >
                   <Plus className="h-3.5 w-3.5" />
@@ -1738,84 +1833,121 @@ export default function Dashboard() {
               </div>
             </div>
             <p className="mt-2 text-[12px] text-bone-muted">
-              Tap a card to edit. Suggested prices are prefill only. Add a custom name anytime.
+              Tracked tools stay on top. Hide the rest — or add any name you pay for.
             </p>
+
+            {!hasSpend && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {QUICK_START_TOOLS.map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => {
+                      if (hiddenTools.includes(name)) {
+                        persistPrefs({
+                          hiddenTools: hiddenTools.filter((item) => item !== name),
+                        });
+                      }
+                      openManualCorrection(name);
+                    }}
+                    className="rounded-full border border-hairline bg-background/50 px-3 py-1.5 text-[12px] text-bone-muted transition hover:border-sage-soft/40 hover:text-bone"
+                  >
+                    + {name}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() =>
+                    openManualCorrection("", undefined, null, { custom: true })
+                  }
+                  className="rounded-full border border-sage/40 bg-sage/10 px-3 py-1.5 text-[12px] text-sage-soft transition hover:text-bone"
+                >
+                  + Custom tool
+                </button>
+              </div>
+            )}
 
             <ul className="mt-5 space-y-3">
               {visibleTools.map((service) => {
                 const savedAmount = serviceAmounts[service.name];
                 const isSet = savedAmount !== undefined;
                 return (
-                  <li key={service.name} className="relative">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        openManualCorrection(
-                          service.name,
-                          savedAmount,
-                          service.isUsageBased ? null : "Monthly subscription",
-                        )
-                      }
-                      className="flex w-full items-center gap-4 rounded-2xl bg-surface-raised/70 px-4 py-4 text-left transition duration-180 hover:bg-surface-raised hover:ring-1 hover:ring-sage-soft/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-sage/40"
-                    >
-                      <div
-                        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full font-serif text-sm ${service.accent}`}
-                      >
-                        {service.name.slice(0, 1)}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="truncate font-medium text-bone">
-                            {service.name}
-                          </span>
-                          <span
-                            className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
-                              isSet ? "bg-mint/15 text-mint" : "bg-bone/10 text-bone-muted"
-                            }`}
-                          >
-                            {isSet ? "Tracked" : "Not set"}
-                          </span>
-                          {service.origin === "custom" && (
-                            <span className="rounded-full bg-clay/15 px-2.5 py-0.5 text-[11px] font-medium text-clay">
-                              Custom
-                            </span>
-                          )}
-                        </div>
-                        <p className="mt-1 text-[13px] text-bone-muted">
-                          {service.type}
-                          {isSet
-                            ? service.isUsageBased
-                              ? " · This period"
-                              : " · Monthly"
-                            : service.suggestedAmount > 0
-                              ? ` · Suggested $${service.suggestedAmount.toFixed(0)}`
-                              : ""}
-                        </p>
-                      </div>
-                      <div className="shrink-0 text-right">
-                        <p className="font-medium tabular-nums text-bone">
-                          {isSet ? `$${savedAmount.toFixed(2)}` : "—"}
-                        </p>
-                        <p className="inline-flex items-center gap-1 text-[11px] text-sage-soft">
-                          <PencilLine className="h-3 w-3" />
-                          {service.isUsageBased &&
-                          (service.name === "OpenAI API" ||
-                            service.name === "Anthropic API")
-                            ? "Scan or edit"
-                            : "Set amount"}
-                        </p>
-                      </div>
-                    </button>
-                    {!isSet && (
+                  <li key={service.name}>
+                    <div className="flex items-stretch gap-2 rounded-2xl bg-surface-raised/70 transition duration-180 hover:bg-surface-raised hover:ring-1 hover:ring-sage-soft/30">
                       <button
                         type="button"
-                        onClick={() => hideTool(service.name)}
-                        className="absolute right-3 top-3 rounded-full p-1.5 text-bone-muted/70 transition hover:bg-bone/10 hover:text-bone"
-                        aria-label={`Hide ${service.name}`}
+                        onClick={() =>
+                          openManualCorrection(
+                            service.name,
+                            savedAmount,
+                            service.isUsageBased ? null : "Monthly subscription",
+                          )
+                        }
+                        className="flex min-w-0 flex-1 items-center gap-4 px-4 py-4 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-sage/40"
                       >
-                        <EyeOff className="h-3.5 w-3.5" />
+                        <div
+                          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full font-serif text-sm ${service.accent}`}
+                        >
+                          {service.name.slice(0, 1)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="truncate font-medium text-bone">
+                              {service.name}
+                            </span>
+                            <span
+                              className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
+                                isSet ? "bg-mint/15 text-mint" : "bg-bone/10 text-bone-muted"
+                              }`}
+                            >
+                              {isSet ? "Tracked" : "Not set"}
+                            </span>
+                            {service.origin === "custom" && (
+                              <span className="rounded-full bg-clay/15 px-2.5 py-0.5 text-[11px] font-medium text-clay">
+                                Custom
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 text-[13px] text-bone-muted">
+                            {service.type}
+                            {isSet
+                              ? service.isUsageBased
+                                ? " · This period"
+                                : " · Monthly"
+                              : service.suggestedAmount > 0
+                                ? ` · Suggested $${service.suggestedAmount.toFixed(0)}`
+                                : ""}
+                          </p>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <p className="font-medium tabular-nums text-bone">
+                            {isSet ? `$${savedAmount.toFixed(2)}` : "—"}
+                          </p>
+                          <p className="inline-flex items-center gap-1 text-[11px] text-sage-soft">
+                            <PencilLine className="h-3 w-3" />
+                            {service.isUsageBased &&
+                            (service.name === "OpenAI API" ||
+                              service.name === "Anthropic API")
+                              ? "Scan or edit"
+                              : "Set amount"}
+                          </p>
+                        </div>
                       </button>
-                    )}
+                      {!isSet && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            hideTool(service.name);
+                          }}
+                          className="shrink-0 self-center rounded-full p-2.5 text-bone-muted/70 transition hover:bg-bone/10 hover:text-bone"
+                          aria-label={`Hide ${service.name}`}
+                          title="Hide"
+                        >
+                          <EyeOff className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
                   </li>
                 );
               })}
@@ -1940,6 +2072,10 @@ export default function Dashboard() {
           onUsageBasedChange={setManualUsageBased}
           onClose={() => setIsManualCorrectionOpen(false)}
           onSave={saveManualCorrection}
+          canClear={
+            !isCustomMode && serviceAmounts[manualService] !== undefined
+          }
+          onClear={() => clearTrackedTool(manualService)}
           error={manualError}
         />
       )}
