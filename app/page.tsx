@@ -5,6 +5,7 @@ import {
   Check,
   Download,
   EyeOff,
+  LogOut,
   PencilLine,
   Plus,
   Radar,
@@ -474,8 +475,8 @@ function MobileDesktopBridgeBanner({
               Email yourself a sign-in link
             </h2>
             <p className="mt-2 text-[14px] leading-relaxed text-bone-muted">
-              Scanning works here too. Sign in when you want the same totals on
-              your computer — still free on-device.
+              Sign in backs up this device&apos;s totals to your email — free.
+              It does not unlock ToRay Pro features.
             </p>
           </div>
 
@@ -531,7 +532,7 @@ function SignInModal({
       <div className="w-full max-w-md rounded-[28px] border border-hairline bg-surface p-6 shadow-2xl md:p-8">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <Eyebrow>Free account</Eyebrow>
+            <Eyebrow>Free backup</Eyebrow>
             <h2
               id="sign-in-title"
               className="mt-2 font-serif text-2xl tracking-[-0.02em] text-bone"
@@ -539,9 +540,24 @@ function SignInModal({
               Sign in with email
             </h2>
             <p className="mt-2 text-sm leading-relaxed text-bone-muted">
-              We&apos;ll send a magic link. Scanning stays free — sign in only
-              if you want cloud sync across devices.
+              Magic link keeps your tools, amounts, and budget on this account
+              if you clear the browser. Free limits stay the same — ToRay Pro is
+              a separate upgrade.
             </p>
+            <ul className="mt-3 space-y-1.5 text-[13px] text-bone-muted">
+              <li className="flex gap-2">
+                <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-mint" />
+                Cloud backup of tracked tools &amp; budget
+              </li>
+              <li className="flex gap-2">
+                <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-mint" />
+                Same Free caps ({FREE_TOOL_LIMIT} tools · ${FREE_BUDGET_CAP} budget)
+              </li>
+              <li className="flex gap-2">
+                <X className="mt-0.5 h-3.5 w-3.5 shrink-0 text-bone-muted/70" />
+                Does not unlock Outlook, Stack Pulse, or Gemini/Grok Vision
+              </li>
+            </ul>
           </div>
           <button
             type="button"
@@ -933,6 +949,8 @@ export default function Dashboard() {
   const [foundingVerifyMessage, setFoundingVerifyMessage] = useState<
     string | null
   >(null);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const cloudHydratedForRef = useRef<string | null>(null);
 
   const catalog: ToolDef[] = (() => {
     const base: ToolDef[] = [
@@ -1079,9 +1097,28 @@ export default function Dashboard() {
     const params = new URLSearchParams(window.location.search);
     const stripeSessionId =
       params.get("stripe_session_id") || params.get("session_id");
+    const justSignedIn = params.get("signed_in") === "1";
+    const authError = params.get("auth_error") === "1";
+
+    if (authError) {
+      setAuthNotice(
+        "That sign-in link expired or failed. Request a new magic link.",
+      );
+    }
 
     const supabase = createClient();
     supabaseRef.current = supabase;
+
+    function clearAuthParams() {
+      params.delete("stripe_session_id");
+      params.delete("session_id");
+      params.delete("upgraded");
+      params.delete("founding");
+      params.delete("signed_in");
+      params.delete("auth_error");
+      const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
+      window.history.replaceState({}, "", next);
+    }
 
     async function confirmStripeSession(sessionId: string) {
       try {
@@ -1104,11 +1141,11 @@ export default function Dashboard() {
             );
           } else if (result.email) {
             setFoundingVerifyMessage(
-              `Checkout verified for ${result.email}. Sign in with that email to unlock Gemini & Grok Vision.`,
+              `Checkout verified for ${result.email}. Sign in with that email to unlock Pro features.`,
             );
           } else {
             setFoundingVerifyMessage(
-              "Checkout verified. Sign in with your Stripe email to unlock Vision extras.",
+              "Checkout verified. Sign in with your Stripe email to unlock Pro features.",
             );
           }
         } else if (result.error) {
@@ -1119,12 +1156,7 @@ export default function Dashboard() {
           "Could not verify Stripe checkout. Try signing in with your checkout email.",
         );
       } finally {
-        params.delete("stripe_session_id");
-        params.delete("session_id");
-        params.delete("upgraded");
-        params.delete("founding");
-        const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
-        window.history.replaceState({}, "", next);
+        clearAuthParams();
       }
     }
 
@@ -1147,48 +1179,28 @@ export default function Dashboard() {
       return null;
     }
 
-    async function hydrateDashboard() {
-      let localHistory: BillingScan[] = [];
+    function readLocalHistory(): BillingScan[] {
       const stored = window.localStorage.getItem(SCAN_HISTORY_KEY);
-
-      if (stored) {
-        try {
-          localHistory = JSON.parse(stored) as BillingScan[];
-        } catch {
-          window.localStorage.removeItem(SCAN_HISTORY_KEY);
-        }
+      if (!stored) return [];
+      try {
+        return JSON.parse(stored) as BillingScan[];
+      } catch {
+        window.localStorage.removeItem(SCAN_HISTORY_KEY);
+        return [];
       }
+    }
 
-      const serviceDefaults = [
-        ...PRESET_TOOLS.map((tool) => ({ name: tool.name, amount: 0 })),
-        ...local.customTools.map((tool) => ({ name: tool.name, amount: 0 })),
-      ];
-
-      if (localHistory.length > 0) {
-        const localDashboard = applyHistoryToDashboard(
-          localHistory,
-          INITIAL_SPENT,
-          serviceDefaults,
-        );
-        applyDashboardState(
-          localDashboard.scanHistory,
-          localDashboard.spent,
-          localDashboard.serviceAmounts,
-        );
-      }
-
-      if (stripeSessionId) {
-        await confirmStripeSession(stripeSessionId);
-      }
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user?.email) return;
+    async function syncCloudForUser(user: {
+      email?: string | null;
+      user_metadata?: Record<string, unknown>;
+    }) {
+      if (!user.email) return;
+      if (cloudHydratedForRef.current === user.email) return;
+      cloudHydratedForRef.current = user.email;
 
       setUserEmail(user.email);
       setIsLoggedIn(true);
+      setIsSignInOpen(false);
 
       const remotePrefs = mergePrefs(
         local,
@@ -1213,32 +1225,121 @@ export default function Dashboard() {
       setBudget(clampedBudget);
       writeBudget(clampedBudget);
 
-      const remoteHistory = await fetchUserBillingScans(supabase);
-      const merged = mergeBillingScanHistories(localHistory, remoteHistory);
-      const dashboard = applyHistoryToDashboard(
-        merged,
-        INITIAL_SPENT,
-        [
-          ...PRESET_TOOLS.map((tool) => ({ name: tool.name, amount: 0 })),
-          ...remotePrefs.customTools.map((tool) => ({
-            name: tool.name,
-            amount: 0,
-          })),
-        ],
-      );
+      if (justSignedIn) {
+        setAuthNotice(
+          foundingNow
+            ? "Signed in with ToRay Pro — unlimited tools, outlook, Stack Pulse, and Vision extras are on."
+            : `Signed in — cloud backup is on for this email. Free plan still applies (${FREE_TOOL_LIMIT} tools · $${FREE_BUDGET_CAP} budget). ToRay Pro is a separate upgrade.`,
+        );
+        clearAuthParams();
+      } else if (!authError) {
+        setAuthNotice(
+          foundingNow
+            ? `Signed in as ${user.email} · ToRay Pro active`
+            : `Signed in as ${user.email} · Free backup on (not Pro)`,
+        );
+      }
 
-      applyDashboardState(
-        dashboard.scanHistory,
-        dashboard.spent,
-        dashboard.serviceAmounts,
-      );
-      window.localStorage.setItem(
-        SCAN_HISTORY_KEY,
-        JSON.stringify(dashboard.scanHistory),
-      );
+      const localHistory = readLocalHistory();
+      setCloudSyncStatus("syncing");
+      try {
+        const remoteHistory = await fetchUserBillingScans(supabase);
+        const merged = mergeBillingScanHistories(localHistory, remoteHistory);
+        const dashboard = applyHistoryToDashboard(
+          merged,
+          INITIAL_SPENT,
+          [
+            ...PRESET_TOOLS.map((tool) => ({ name: tool.name, amount: 0 })),
+            ...remotePrefs.customTools.map((tool) => ({
+              name: tool.name,
+              amount: 0,
+            })),
+          ],
+        );
+        applyDashboardState(
+          dashboard.scanHistory,
+          dashboard.spent,
+          dashboard.serviceAmounts,
+        );
+        window.localStorage.setItem(
+          SCAN_HISTORY_KEY,
+          JSON.stringify(dashboard.scanHistory),
+        );
+        setCloudSyncStatus("synced");
+        window.setTimeout(() => setCloudSyncStatus("idle"), 2500);
+      } catch {
+        setCloudSyncStatus("error");
+      }
     }
 
+    async function hydrateDashboard() {
+      const localHistory = readLocalHistory();
+      const serviceDefaults = [
+        ...PRESET_TOOLS.map((tool) => ({ name: tool.name, amount: 0 })),
+        ...local.customTools.map((tool) => ({ name: tool.name, amount: 0 })),
+      ];
+
+      if (localHistory.length > 0) {
+        const localDashboard = applyHistoryToDashboard(
+          localHistory,
+          INITIAL_SPENT,
+          serviceDefaults,
+        );
+        applyDashboardState(
+          localDashboard.scanHistory,
+          localDashboard.spent,
+          localDashboard.serviceAmounts,
+        );
+      }
+
+      if (stripeSessionId) {
+        await confirmStripeSession(stripeSessionId);
+      } else if (authError || justSignedIn) {
+        // Keep signed_in until syncCloudForUser clears it after Pro status is known.
+        if (authError) clearAuthParams();
+      }
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (session?.user?.email) {
+        await syncCloudForUser(session.user);
+      } else if (justSignedIn) {
+        setAuthNotice(
+          "Sign-in link opened, but no session was found. Try the link again or request a new one.",
+        );
+        clearAuthParams();
+      }
+    }
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT") {
+        cloudHydratedForRef.current = null;
+        setIsLoggedIn(false);
+        setUserEmail(null);
+        setCloudSyncStatus("idle");
+        setAuthNotice("Signed out. Totals on this device stay here until you sign in again.");
+        return;
+      }
+
+      if (
+        (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") &&
+        session?.user?.email
+      ) {
+        if (event === "SIGNED_IN") {
+          cloudHydratedForRef.current = null;
+        }
+        void syncCloudForUser(session.user);
+      }
+    });
+
     void hydrateDashboard();
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -1313,6 +1414,24 @@ export default function Dashboard() {
 
   function openSignIn() {
     setIsSignInOpen(true);
+  }
+
+  async function handleSignOut() {
+    const supabase = supabaseRef.current ?? createClient();
+    supabaseRef.current = supabase;
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // Still clear local session UI.
+    }
+    cloudHydratedForRef.current = null;
+    setIsLoggedIn(false);
+    setUserEmail(null);
+    setCloudSyncStatus("idle");
+    setIsSignInOpen(false);
+    setAuthNotice(
+      "Signed out. Totals on this device stay here until you sign in again.",
+    );
   }
 
   function promptFoundingUpgrade(message: string) {
@@ -1764,17 +1883,14 @@ export default function Dashboard() {
 
   const stripeHref = buildStripeHref(userEmail);
   const showBudgetControls = canUseBudget(isFounding);
-  const historyLabel = isFounding
-    ? scanHistory.length === 0
-      ? isLoggedIn
-        ? "No updates yet · cloud ready"
-        : "No updates yet · this device"
-      : `${scanHistory.length} update${scanHistory.length === 1 ? "" : "s"}${isLoggedIn ? " · cloud" : " · this device"}`
-    : scanHistory.length === 0
-      ? isLoggedIn
-        ? `Free · ${FREE_TOOL_LIMIT} tools · backed up`
-        : `Free · ${FREE_TOOL_LIMIT} tools · this device`
-      : `Latest update${isLoggedIn ? " · backed up" : " · this device"}`;
+  const planChip = isFounding ? "ToRay Pro" : "Free plan";
+  const storageChip = isLoggedIn ? "Backed up" : "This device";
+  const historyLabel =
+    scanHistory.length === 0
+      ? `No updates yet · ${storageChip} · ${planChip}`
+      : isFounding
+        ? `${scanHistory.length} update${scanHistory.length === 1 ? "" : "s"} · ${storageChip} · ${planChip}`
+        : `Latest update · ${storageChip} · ${planChip}`;
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-background font-sans text-bone selection:bg-sage/40">
@@ -1791,40 +1907,28 @@ export default function Dashboard() {
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
-            <span className="hidden items-center gap-2 text-sm text-bone-muted sm:inline-flex">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <span className="hidden items-center gap-2 text-sm text-bone-muted md:inline-flex">
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-mint opacity-60" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-mint" />
               </span>
-              Free to scan
+              {isFounding ? "ToRay Pro" : "Free to scan"}
             </span>
             {isLoggedIn ? (
-              <div className="flex items-center gap-3">
-                <span className="hidden text-[12px] text-mint sm:inline">
-                  {cloudSyncStatus === "syncing"
-                    ? "Syncing…"
-                    : cloudSyncStatus === "synced"
-                      ? isFounding
-                        ? "Cloud synced · ToRay Pro"
-                        : `Backed up (Free · ${FREE_TOOL_LIMIT} tools)`
-                      : cloudSyncStatus === "error"
-                        ? "Sync failed"
-                        : isFounding
-                          ? "Cloud on · ToRay Pro"
-                          : `Backed up (Free · ${FREE_TOOL_LIMIT} tools)`}
-                </span>
-                <span className="hidden max-w-[140px] truncate text-sm text-bone-muted sm:block">
+              <div className="flex items-center gap-2 sm:gap-3">
+                <span className="max-w-[96px] truncate text-[12px] text-bone-muted sm:max-w-[160px] sm:text-sm">
                   {userEmail}
                 </span>
-                <form action="/auth/signout" method="post">
-                  <button
-                    type="submit"
-                    className="rounded-full border border-hairline px-3 py-2 text-sm text-bone-muted transition hover:text-bone"
-                  >
-                    Sign out
-                  </button>
-                </form>
+                <button
+                  type="button"
+                  onClick={() => void handleSignOut()}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-hairline px-3 py-2 text-sm text-bone-muted transition hover:text-bone"
+                  aria-label="Sign out"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Sign out</span>
+                </button>
               </div>
             ) : (
               <button
@@ -1840,7 +1944,7 @@ export default function Dashboard() {
                 href={stripeHref}
                 className="rounded-full border border-hairline px-3 py-2 text-sm text-bone-muted transition hover:border-sage-soft/40 hover:text-bone"
               >
-                Upgrade
+                Pro
               </a>
             )}
           </div>
@@ -1848,6 +1952,69 @@ export default function Dashboard() {
       </header>
 
       <main className="relative z-10 mx-auto max-w-6xl px-6 pb-24">
+        {(authNotice || isLoggedIn) && (
+          <div
+            className={`mt-6 rounded-[20px] border px-4 py-3 md:px-5 ${
+              isFounding
+                ? "border-mint/35 bg-mint/10"
+                : "border-sage/30 bg-sage/10"
+            }`}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-sage-soft">
+                  {isLoggedIn
+                    ? isFounding
+                      ? "Account · ToRay Pro"
+                      : "Account · Free backup"
+                    : "Account"}
+                </p>
+                <p className="mt-1 text-sm leading-relaxed text-bone">
+                  {authNotice ??
+                    (isFounding
+                      ? `Signed in as ${userEmail}. Pro features unlocked.`
+                      : `Signed in as ${userEmail}. Backup is on — Free limits still apply (${FREE_TOOL_LIMIT} tools · $${FREE_BUDGET_CAP} budget).`)}
+                </p>
+                {isLoggedIn && !isFounding && (
+                  <p className="mt-1 text-[12px] text-bone-muted">
+                    Sign-in ≠ Pro. Upgrade separately for outlook, Stack Pulse,
+                    CSV, and Gemini/Grok Vision.
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {isLoggedIn && !isFounding && (
+                  <a
+                    href={stripeHref}
+                    className="rounded-full bg-sage px-3 py-1.5 text-[12px] font-medium text-bone transition hover:bg-sage-glow"
+                  >
+                    Upgrade to Pro
+                  </a>
+                )}
+                {isLoggedIn && (
+                  <button
+                    type="button"
+                    onClick={() => void handleSignOut()}
+                    className="rounded-full border border-hairline px-3 py-1.5 text-[12px] text-bone-muted transition hover:text-bone"
+                  >
+                    Sign out
+                  </button>
+                )}
+                {authNotice && (
+                  <button
+                    type="button"
+                    onClick={() => setAuthNotice(null)}
+                    className="rounded-full p-1.5 text-bone-muted transition hover:bg-bone/10 hover:text-bone"
+                    aria-label="Dismiss notice"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         <section className="grid grid-cols-1 items-start gap-8 py-8 lg:grid-cols-2 lg:gap-10 lg:py-10">
           <div>
             <Eyebrow>Free Instant Scanner</Eyebrow>
@@ -1866,10 +2033,10 @@ export default function Dashboard() {
             </p>
             <p className="mt-6 text-sm text-bone-muted">
               {lastSyncedAt
-                ? `Last update ${lastSyncedAt}`
+                ? `Last update ${lastSyncedAt} · ${storageChip} · ${planChip}`
                 : hasSpend
-                  ? "Totals loaded from this device."
-                  : "Your dashboard starts empty."}
+                  ? `Totals ready · ${storageChip} · ${planChip}`
+                  : `Empty dashboard · ${storageChip} · ${planChip}`}
             </p>
           </div>
 
@@ -2332,9 +2499,9 @@ export default function Dashboard() {
               Nice — ${spent.toFixed(0)} across {trackedCount} tools on this device.
             </p>
             <p className="mt-1 text-sm text-bone-muted">
-              Sign in free to back up those {FREE_TOOL_LIMIT} tools. To run a full
-              stack (outlook, budget, unlimited tools), you&apos;ll want{" "}
-              {FOUNDING_PLAN_LABEL}.
+              Sign in free to back up those tools to your email. Same Free
+              limits — Pro (outlook, Stack Pulse, unlimited tools) is a separate
+              upgrade.
             </p>
             <button
               type="button"

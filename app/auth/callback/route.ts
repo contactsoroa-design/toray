@@ -10,7 +10,9 @@ export async function GET(request: Request) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
-      return NextResponse.redirect(`${origin}${next}`);
+      const destination = new URL(next, origin);
+      destination.searchParams.set("signed_in", "1");
+      return NextResponse.redirect(destination.toString());
     }
   }
 
