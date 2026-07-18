@@ -149,7 +149,13 @@ function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
 
-function WaitlistSuccess({ compact = false }: { compact?: boolean }) {
+function WaitlistSuccess({
+  compact = false,
+  message = "We will notify you as soon as we officially launch.",
+}: {
+  compact?: boolean;
+  message?: string;
+}) {
   return (
     <div
       className={`rounded-2xl border border-mint/30 bg-gradient-to-br from-mint/15 to-sage/10 text-center ${
@@ -166,7 +172,7 @@ function WaitlistSuccess({ compact = false }: { compact?: boolean }) {
         Thank you!
       </p>
       <p className={`mt-1 text-bone-muted ${compact ? "text-xs" : "text-sm"}`}>
-        We will notify you as soon as we officially launch.
+        {message}
       </p>
     </div>
   );
@@ -180,35 +186,52 @@ function WaitlistForm({
   onSubmit,
   variant = "default",
   id,
+  submitLabel = "Join the Waitlist",
+  submittingLabel = "Joining…",
+  successMessage,
 }: {
   email: string;
   onEmailChange: (value: string) => void;
   submitted: boolean;
   isSubmitting: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
-  variant?: "default" | "compact" | "indigo";
+  variant?: "default" | "compact" | "indigo" | "mobile";
   id?: string;
+  submitLabel?: string;
+  submittingLabel?: string;
+  successMessage?: string;
 }) {
   if (submitted) {
-    return <WaitlistSuccess compact={variant === "compact"} />;
+    return (
+      <WaitlistSuccess
+        compact={variant === "compact"}
+        message={successMessage}
+      />
+    );
   }
 
   const inputClass =
     variant === "indigo"
       ? "w-full rounded-full border border-indigo-500/30 bg-slate-900/60 px-4 py-3 text-sm text-bone placeholder:text-bone-muted/60 outline-none transition focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/20"
-      : "w-full rounded-full border border-hairline bg-background/60 px-4 py-3 text-sm text-bone placeholder:text-bone-muted/60 outline-none transition focus:border-sage-soft/60 focus:ring-2 focus:ring-sage/20";
+      : variant === "mobile"
+        ? "w-full rounded-full border border-clay/35 bg-background/70 px-4 py-3.5 text-base text-bone placeholder:text-bone-muted/60 outline-none transition focus:border-clay focus:ring-2 focus:ring-clay/25"
+        : "w-full rounded-full border border-hairline bg-background/60 px-4 py-3 text-sm text-bone placeholder:text-bone-muted/60 outline-none transition focus:border-sage-soft/60 focus:ring-2 focus:ring-sage/20";
 
   const buttonClass =
     variant === "indigo"
       ? "shrink-0 rounded-full bg-indigo-600 px-6 py-3 text-sm font-medium text-white transition duration-180 hover:bg-indigo-500"
-      : variant === "compact"
-        ? "shrink-0 rounded-full bg-sage px-4 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow"
-        : "shrink-0 rounded-full bg-sage px-6 py-3 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow";
+      : variant === "mobile"
+        ? "w-full shrink-0 rounded-full bg-clay px-6 py-3.5 text-base font-semibold text-background transition duration-180 hover:bg-clay/90 sm:w-auto"
+        : variant === "compact"
+          ? "shrink-0 rounded-full bg-sage px-4 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow"
+          : "shrink-0 rounded-full bg-sage px-6 py-3 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow";
 
   const layoutClass =
     variant === "compact"
       ? "flex flex-col gap-2 sm:flex-row sm:items-center"
-      : "flex flex-col gap-3 sm:flex-row sm:items-center";
+      : variant === "mobile"
+        ? "flex flex-col gap-3 sm:flex-row sm:items-stretch"
+        : "flex flex-col gap-3 sm:flex-row sm:items-center";
 
   return (
     <form id={id} onSubmit={onSubmit} className={layoutClass}>
@@ -220,12 +243,85 @@ function WaitlistForm({
         onChange={(e) => onEmailChange(e.target.value)}
         placeholder="you@company.com"
         aria-label="Email address"
+        autoComplete="email"
+        inputMode="email"
         className={inputClass}
       />
-      <button type="submit" disabled={isSubmitting} className={`${buttonClass} disabled:cursor-wait disabled:opacity-60`}>
-        {isSubmitting ? "Joining…" : "Join the Waitlist"}
+      <button
+        type="submit"
+        disabled={isSubmitting}
+        className={`${buttonClass} disabled:cursor-wait disabled:opacity-60`}
+      >
+        {isSubmitting ? submittingLabel : submitLabel}
       </button>
     </form>
+  );
+}
+
+function MobileDesktopBridgeBanner({
+  email,
+  onEmailChange,
+  submitted,
+  isSubmitting,
+  onSubmit,
+  error,
+}: {
+  email: string;
+  onEmailChange: (value: string) => void;
+  submitted: boolean;
+  isSubmitting: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
+  error: string | null;
+}) {
+  return (
+    <section
+      aria-labelledby="mobile-bridge-heading"
+      className="relative z-10 border-b border-clay/25 bg-gradient-to-br from-clay/20 via-surface to-sage/15"
+    >
+      <div className="mx-auto max-w-6xl px-4 py-4 sm:px-6 sm:py-5">
+        <div className="rounded-[24px] border border-clay/30 bg-surface-raised/90 p-4 shadow-[0_12px_40px_rgba(0,0,0,0.28)] sm:p-5 md:p-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:gap-8">
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-semibold tracking-wide text-clay sm:text-sm">
+                📱 On your mobile phone?
+              </p>
+              <h2
+                id="mobile-bridge-heading"
+                className="mt-1.5 font-serif text-[1.35rem] leading-snug tracking-[-0.02em] text-bone sm:text-2xl"
+              >
+                No OpenAI/Anthropic screenshot on your phone right now? No
+                problem.
+              </h2>
+              <p className="mt-2 text-[14px] leading-relaxed text-bone-muted sm:text-[15px]">
+                Enter your email below to save your $12/mo Founding Member spot.
+                We&apos;ll send you a custom magic link to access ToRay from your
+                desktop later when you are ready to scan.
+              </p>
+            </div>
+
+            <div className="w-full shrink-0 md:max-w-md">
+              <WaitlistForm
+                id="mobile-spot-waitlist"
+                email={email}
+                onEmailChange={onEmailChange}
+                submitted={submitted}
+                isSubmitting={isSubmitting}
+                onSubmit={onSubmit}
+                variant="mobile"
+                submitLabel="Secure My Spot"
+                submittingLabel="Securing…"
+                successMessage="Spot saved. We'll email a desktop magic link so you can scan when you're at your computer."
+              />
+              {error && (
+                <p className="mt-2 text-center text-sm text-warning md:text-left">
+                  {error}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -816,6 +912,15 @@ export default function Dashboard() {
           </div>
         </div>
       </header>
+
+      <MobileDesktopBridgeBanner
+        email={waitlistEmail}
+        onEmailChange={setWaitlistEmail}
+        submitted={waitlistSubmitted}
+        isSubmitting={isWaitlistSubmitting}
+        onSubmit={handleWaitlistSubmit}
+        error={waitlistError}
+      />
 
       <main className="relative z-10 mx-auto max-w-6xl px-6 pb-24">
         <div className="flex items-end justify-between py-12 md:py-14">
