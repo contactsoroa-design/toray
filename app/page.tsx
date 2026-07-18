@@ -5,7 +5,6 @@ import {
   BellRing,
   Check,
   PencilLine,
-  Plus,
   RefreshCw,
   Radar,
   ScanLine,
@@ -22,12 +21,11 @@ import {
 } from "@/lib/billing-scans";
 import { createClient } from "@/lib/supabase/client";
 
-const BUDGET = 200;
 const INITIAL_SPENT = 0;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
-const PACE = 1.32;
 const SCAN_HISTORY_KEY = "toray-billing-scans";
+const BUDGET_KEY = "toray-monthly-budget";
 const STRIPE_URL =
   process.env.NEXT_PUBLIC_STRIPE_PAYMENT_LINK ??
   "https://buy.stripe.com/6oU14m0Lu92V2dL0dx9sk00";
@@ -112,6 +110,43 @@ function endOfMonthLabel(date = new Date()) {
   return end.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+function formatClock(date: Date) {
+  return date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/** Usage-based spend is paced to month-end; fixed subscriptions stay flat. */
+function computeProjectedSpend(
+  amounts: Partial<Record<SupportedService, number>>,
+  catalog: Service[],
+  date = new Date(),
+) {
+  const day = date.getDate();
+  const daysInMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  const pace = day > 0 ? daysInMonth / day : 1;
+
+  let fixed = 0;
+  let usage = 0;
+  for (const service of catalog) {
+    const amount = amounts[service.name];
+    if (amount === undefined) continue;
+    if (service.isUsageBased) usage += amount;
+    else fixed += amount;
+  }
+
+  return Math.round((fixed + usage * pace) * 100) / 100;
+}
+
+function readStoredBudget(): number | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(BUDGET_KEY);
+  if (!raw) return null;
+  const value = Number.parseFloat(raw);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
 function StripeCheckoutLink({
   children,
   className,
@@ -138,7 +173,6 @@ const SCAN_STEPS = [
 ];
 
 const PRO_FEATURES = [
-  { icon: ScanLine, text: "Unlimited OpenAI & Anthropic screenshot scans" },
   { icon: Radar, text: "Cloud sync so your totals follow you across devices" },
   { icon: BellRing, text: "Founding Member price locked at $12/mo" },
   { icon: RefreshCw, text: "Priority access to new providers as we add them" },
@@ -184,7 +218,7 @@ function isValidEmail(value: string) {
 
 function WaitlistSuccess({
   compact = false,
-  message = "You're in. Check your inbox for your free account link.",
+  message = "Check your inbox for a magic link to sign in.",
 }: {
   compact?: boolean;
   message?: string;
@@ -219,8 +253,8 @@ function WaitlistForm({
   onSubmit,
   variant = "default",
   id,
-  submitLabel = "Get free account",
-  submittingLabel = "Saving…",
+  submitLabel = "Email me a sign-in link",
+  submittingLabel = "Sending link…",
   successMessage,
 }: {
   email: string;
@@ -305,50 +339,119 @@ function MobileDesktopBridgeBanner({
   return (
     <section
       aria-labelledby="mobile-bridge-heading"
-      className="relative z-10 border-b border-clay/25 bg-gradient-to-br from-clay/20 via-surface to-sage/15 md:hidden"
+      className="md:hidden"
     >
-      <div className="mx-auto max-w-6xl px-4 py-4 sm:px-6 sm:py-5">
-        <div className="rounded-[24px] border border-clay/30 bg-surface-raised/90 p-4 shadow-[0_12px_40px_rgba(0,0,0,0.28)] sm:p-5 md:p-6">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:gap-8">
-            <div className="min-w-0 flex-1">
-              <p className="text-[13px] font-semibold tracking-wide text-clay sm:text-sm">
-                📱 On your mobile phone?
-              </p>
-              <h2
-                id="mobile-bridge-heading"
-                className="mt-1.5 font-serif text-[1.35rem] leading-snug tracking-[-0.02em] text-bone sm:text-2xl"
-              >
-                No OpenAI/Anthropic screenshot on your device right now?
-              </h2>
-              <p className="mt-2 text-[14px] leading-relaxed text-bone-muted sm:text-[15px]">
-                Email yourself a free account link for desktop. Scanning stays
-                free — Founding Member ($12/mo) adds cloud sync across devices.
-              </p>
-            </div>
+      <div className="rounded-[24px] border border-hairline bg-surface p-4 sm:p-5">
+        <div className="flex flex-col gap-4">
+          <div className="min-w-0">
+            <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-sage-soft">
+              Continue on desktop
+            </p>
+            <h2
+              id="mobile-bridge-heading"
+              className="mt-1.5 font-serif text-xl leading-snug tracking-[-0.02em] text-bone"
+            >
+              Email yourself a sign-in link
+            </h2>
+            <p className="mt-2 text-[14px] leading-relaxed text-bone-muted">
+              Scanning works here too. Sign in when you want the same totals on
+              your computer — still free on-device.
+            </p>
+          </div>
 
-            <div className="w-full shrink-0 md:max-w-md">
-              <WaitlistForm
-                id="mobile-spot-waitlist"
-                email={email}
-                onEmailChange={onEmailChange}
-                submitted={submitted}
-                isSubmitting={isSubmitting}
-                onSubmit={onSubmit}
-                variant="mobile"
-                submitLabel="Secure My Spot"
-                submittingLabel="Sending link…"
-                successMessage="Check your email for a magic link to your free account."
-              />
-              {error && (
-                <p className="mt-2 text-center text-sm text-warning md:text-left">
-                  {error}
-                </p>
-              )}
-            </div>
+          <div className="w-full">
+            <WaitlistForm
+              id="mobile-sign-in"
+              email={email}
+              onEmailChange={onEmailChange}
+              submitted={submitted}
+              isSubmitting={isSubmitting}
+              onSubmit={onSubmit}
+              variant="mobile"
+              submitLabel="Email me a link"
+              submittingLabel="Sending link…"
+              successMessage="Check your email for a magic link to sign in."
+            />
+            {error && (
+              <p className="mt-2 text-center text-sm text-warning">
+                {error}
+              </p>
+            )}
           </div>
         </div>
       </div>
     </section>
+  );
+}
+
+function SignInModal({
+  email,
+  onEmailChange,
+  submitted,
+  isSubmitting,
+  onSubmit,
+  error,
+  onClose,
+}: {
+  email: string;
+  onEmailChange: (value: string) => void;
+  submitted: boolean;
+  isSubmitting: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
+  error: string | null;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 px-5 py-8 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sign-in-title"
+    >
+      <div className="w-full max-w-md rounded-[28px] border border-hairline bg-surface p-6 shadow-2xl md:p-8">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <Eyebrow>Free account</Eyebrow>
+            <h2
+              id="sign-in-title"
+              className="mt-2 font-serif text-2xl tracking-[-0.02em] text-bone"
+            >
+              Sign in with email
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-bone-muted">
+              We&apos;ll send a magic link. Scanning stays free — sign in only
+              if you want cloud sync across devices.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-2 text-bone-muted transition hover:bg-bone/10 hover:text-bone"
+            aria-label="Close sign in"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="mt-6">
+          <WaitlistForm
+            id="sign-in-form"
+            email={email}
+            onEmailChange={onEmailChange}
+            submitted={submitted}
+            isSubmitting={isSubmitting}
+            onSubmit={onSubmit}
+            variant="default"
+            submitLabel="Email me a sign-in link"
+            submittingLabel="Sending link…"
+            successMessage="Check your email for a magic link to sign in."
+          />
+          {error && (
+            <p className="mt-3 text-sm text-warning">{error}</p>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -580,24 +683,46 @@ export default function Dashboard() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isManualCorrectionOpen, setIsManualCorrectionOpen] = useState(false);
+  const [isSignInOpen, setIsSignInOpen] = useState(false);
   const [manualService, setManualService] =
     useState<SupportedService>("OpenAI API");
   const [manualAmount, setManualAmount] = useState("");
   const [manualPeriod, setManualPeriod] = useState("");
   const [manualError, setManualError] = useState<string | null>(null);
+  const [budget, setBudget] = useState<number | null>(null);
+  const [isEditingBudget, setIsEditingBudget] = useState(false);
+  const [budgetDraft, setBudgetDraft] = useState("");
 
   const animatedSpent = useAnimatedNumber(spent);
-  const spentRatio = Math.min((animatedSpent / BUDGET) * 100, 100);
-  const remaining = Math.max(BUDGET - animatedSpent, 0);
-  const projected = Math.round(animatedSpent * PACE * 100) / 100;
-  const overspend = Math.round((projected - BUDGET) * 100) / 100;
-  const isOverPace = spent > 0 && overspend > 0;
+  const projected = computeProjectedSpend(serviceAmounts, services);
+  const spentRatio =
+    budget && budget > 0 ? Math.min((animatedSpent / budget) * 100, 100) : 0;
+  const remaining = budget != null ? Math.max(budget - animatedSpent, 0) : null;
+  const overspend =
+    budget != null ? Math.round((projected - budget) * 100) / 100 : 0;
+  const isOverBudget = budget != null && projected > budget;
   const isScanning = scanStatus === "scanning";
   const trackedCount = Object.keys(serviceAmounts).length;
   const monthEnd = endOfMonthLabel();
   const hasSpend = spent > 0 || trackedCount > 0;
+  const usageTracked = services
+    .filter((service) => service.isUsageBased && serviceAmounts[service.name] !== undefined)
+    .reduce((sum, service) => sum + (serviceAmounts[service.name] ?? 0), 0);
+  const fixedTracked = Math.round((spent - usageTracked) * 100) / 100;
+
+  function applyDashboardState(history: BillingScan[], nextSpent: number, nextAmounts: Partial<Record<SupportedService, number>>) {
+    setScanHistory(history);
+    setServiceAmounts(nextAmounts);
+    setSpent(nextSpent);
+    const newest = history[0]?.scannedAt;
+    if (newest) {
+      setLastSyncedAt(formatClock(new Date(newest)));
+    }
+  }
 
   useEffect(() => {
+    setBudget(readStoredBudget());
+
     const supabase = createClient();
     supabaseRef.current = supabase;
 
@@ -613,42 +738,46 @@ export default function Dashboard() {
         }
       }
 
+      // Apply local history immediately so returning users never flash empty.
+      if (localHistory.length > 0) {
+        const localDashboard = applyHistoryToDashboard(
+          localHistory,
+          INITIAL_SPENT,
+          SERVICE_DEFAULTS,
+        );
+        applyDashboardState(
+          localDashboard.scanHistory,
+          localDashboard.spent,
+          localDashboard.serviceAmounts,
+        );
+      }
+
       const {
         data: { user },
       } = await supabase.auth.getUser();
 
-      if (user?.email) {
-        setUserEmail(user.email);
-        setIsLoggedIn(true);
+      if (!user?.email) return;
 
-        const remoteHistory = await fetchUserBillingScans(supabase);
-        const merged = mergeBillingScanHistories(localHistory, remoteHistory);
-        const dashboard = applyHistoryToDashboard(
-          merged,
-          INITIAL_SPENT,
-          SERVICE_DEFAULTS,
-        );
+      setUserEmail(user.email);
+      setIsLoggedIn(true);
 
-        setScanHistory(dashboard.scanHistory);
-        setServiceAmounts(dashboard.serviceAmounts);
-        setSpent(dashboard.spent);
-        window.localStorage.setItem(
-          SCAN_HISTORY_KEY,
-          JSON.stringify(dashboard.scanHistory),
-        );
-        return;
-      }
-
-      if (localHistory.length === 0) return;
-
+      const remoteHistory = await fetchUserBillingScans(supabase);
+      const merged = mergeBillingScanHistories(localHistory, remoteHistory);
       const dashboard = applyHistoryToDashboard(
-        localHistory,
+        merged,
         INITIAL_SPENT,
         SERVICE_DEFAULTS,
       );
-      setScanHistory(dashboard.scanHistory);
-      setServiceAmounts(dashboard.serviceAmounts);
-      setSpent(dashboard.spent);
+
+      applyDashboardState(
+        dashboard.scanHistory,
+        dashboard.spent,
+        dashboard.serviceAmounts,
+      );
+      window.localStorage.setItem(
+        SCAN_HISTORY_KEY,
+        JSON.stringify(dashboard.scanHistory),
+      );
     }
 
     void hydrateDashboard();
@@ -659,6 +788,15 @@ export default function Dashboard() {
       if (previewUrl) URL.revokeObjectURL(previewUrl);
     };
   }, [previewUrl]);
+
+  useEffect(() => {
+    if (scanStatus !== "success" || !scanMessage) return;
+    const timer = window.setTimeout(() => {
+      setScanMessage(null);
+      setScanStatus("idle");
+    }, 6000);
+    return () => window.clearTimeout(timer);
+  }, [scanStatus, scanMessage]);
 
   async function handleWaitlistSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -713,21 +851,31 @@ export default function Dashboard() {
     }
   }
 
-  function scrollToFounding() {
-    document.getElementById("founding-member")?.scrollIntoView({ behavior: "smooth" });
+  function openSignIn() {
+    setIsSignInOpen(true);
   }
 
-  function scrollToScanner() {
-    document.getElementById("quick-scan")?.scrollIntoView({ behavior: "smooth" });
+  function markUpdated(at = new Date()) {
+    setLastSyncedAt(formatClock(at));
   }
 
-  function markUpdated() {
-    setLastSyncedAt(
-      new Date().toLocaleTimeString("en-US", {
-        hour: "numeric",
-        minute: "2-digit",
-      }),
-    );
+  function saveBudgetValue(value: number | null) {
+    setBudget(value);
+    if (value == null) {
+      window.localStorage.removeItem(BUDGET_KEY);
+    } else {
+      window.localStorage.setItem(BUDGET_KEY, String(value));
+    }
+    setIsEditingBudget(false);
+  }
+
+  function commitBudgetDraft() {
+    const parsed = Number.parseFloat(budgetDraft);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      saveBudgetValue(null);
+      return;
+    }
+    saveBudgetValue(Math.round(parsed * 100) / 100);
   }
 
   function saveBillingScan(scan: BillingScan) {
@@ -922,38 +1070,23 @@ export default function Dashboard() {
             ) : (
               <button
                 type="button"
-                onClick={scrollToFounding}
+                onClick={openSignIn}
                 className="rounded-full border border-hairline px-3 py-2 text-sm text-bone-muted transition hover:text-bone"
               >
                 Sign in
               </button>
             )}
-            <StripeCheckoutLink className="rounded-full bg-sage px-4 py-2 text-sm font-medium text-bone transition hover:bg-sage-glow">
-              $12/mo
+            <StripeCheckoutLink className="rounded-full border border-hairline px-3 py-2 text-sm text-bone-muted transition hover:border-sage-soft/40 hover:text-bone">
+              Upgrade
             </StripeCheckoutLink>
           </div>
         </div>
       </header>
 
-      <MobileDesktopBridgeBanner
-        email={waitlistEmail}
-        onEmailChange={setWaitlistEmail}
-        submitted={waitlistSubmitted}
-        isSubmitting={isWaitlistSubmitting}
-        onSubmit={handleWaitlistSubmit}
-        error={waitlistError}
-      />
-
       <main className="relative z-10 mx-auto max-w-6xl px-6 pb-24">
         <section className="grid grid-cols-1 items-start gap-8 py-8 lg:grid-cols-2 lg:gap-10 lg:py-10">
           <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-mint/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-mint">
-                <span className="h-1.5 w-1.5 rounded-full bg-mint" />
-                Live
-              </span>
-              <Eyebrow>Free Instant Scanner</Eyebrow>
-            </div>
+            <Eyebrow>Free Instant Scanner</Eyebrow>
             <h1 className="mt-3 font-serif text-4xl font-medium tracking-[-0.02em] text-bone md:text-5xl">
               Know your AI burn before your card does.
             </h1>
@@ -967,7 +1100,11 @@ export default function Dashboard() {
               stay on this device until you sign in.
             </p>
             <p className="mt-6 text-sm text-bone-muted">
-              {lastSyncedAt ? `Last update ${lastSyncedAt}` : "Your dashboard starts empty."}
+              {lastSyncedAt
+                ? `Last update ${lastSyncedAt}`
+                : hasSpend
+                  ? "Totals loaded from this device."
+                  : "Your dashboard starts empty."}
             </p>
           </div>
 
@@ -975,7 +1112,11 @@ export default function Dashboard() {
             <div className="flex items-center justify-between gap-3">
               <Eyebrow>Scan now</Eyebrow>
               <span className="text-[12px] text-mint">
-                {scanHistory.length} saved{isLoggedIn ? " · cloud" : " · this device"}
+                {scanHistory.length === 0
+                  ? isLoggedIn
+                    ? "No updates yet · cloud ready"
+                    : "No updates yet · this device"
+                  : `${scanHistory.length} update${scanHistory.length === 1 ? "" : "s"}${isLoggedIn ? " · synced" : " · this device"}`}
               </span>
             </div>
 
@@ -1044,37 +1185,127 @@ export default function Dashboard() {
                   <PencilLine className="h-3.5 w-3.5" />
                   {scanStatus === "success" ? "Correct amount" : "Enter manually"}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setScanMessage(null);
+                    if (scanStatus === "success") setScanStatus("idle");
+                  }}
+                  className="text-[13px] text-bone-muted underline-offset-4 transition hover:text-bone hover:underline"
+                >
+                  Dismiss
+                </button>
               </div>
             )}
           </div>
         </section>
 
+        {!isLoggedIn && (
+          <div className="mb-8 md:hidden">
+            <MobileDesktopBridgeBanner
+              email={waitlistEmail}
+              onEmailChange={setWaitlistEmail}
+              submitted={waitlistSubmitted}
+              isSubmitting={isWaitlistSubmitting}
+              onSubmit={handleWaitlistSubmit}
+              error={waitlistError}
+            />
+          </div>
+        )}
+
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-7">
             <div className="flex items-center justify-between">
-              <Eyebrow>Spend / Budget</Eyebrow>
-              <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${!hasSpend ? "bg-bone/10 text-bone-muted" : isOverPace ? "bg-danger/20 text-danger" : "bg-sage/25 text-mint"}`}>
-                {!hasSpend ? "Empty" : isOverPace ? "Over pace" : "On track"}
+              <Eyebrow>This month</Eyebrow>
+              <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${!hasSpend ? "bg-bone/10 text-bone-muted" : isOverBudget ? "bg-danger/20 text-danger" : "bg-sage/25 text-mint"}`}>
+                {!hasSpend ? "Empty" : isOverBudget ? "Over budget" : budget != null ? "On track" : "Tracked"}
               </span>
             </div>
-            <div className="mt-4 flex items-baseline gap-2">
+            <div className="mt-4 flex flex-wrap items-baseline gap-2">
               <span className={`font-serif text-4xl tracking-[-0.02em] tabular-nums transition-colors duration-500 ${scanStatus === "success" ? "text-mint" : "text-bone"}`}>
                 ${animatedSpent.toFixed(2)}
               </span>
-              <span className="text-sm tabular-nums text-bone-muted">/ ${BUDGET}</span>
+              {budget != null && !isEditingBudget ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBudgetDraft(budget.toFixed(0));
+                    setIsEditingBudget(true);
+                  }}
+                  className="text-sm tabular-nums text-bone-muted underline-offset-2 transition hover:text-bone hover:underline"
+                >
+                  / ${budget.toFixed(0)} budget
+                </button>
+              ) : null}
             </div>
             <div className="mt-6">
-              <Meter ratio={spentRatio} />
-              <div className="mt-2.5 flex justify-between text-xs text-bone-muted">
-                <span>{spentRatio.toFixed(0)}% used</span>
-                <span>${remaining.toFixed(2)} left</span>
-              </div>
-              <p className={`mt-3 text-[13px] ${isOverPace ? "text-danger" : "text-bone-muted"}`}>
+              {budget != null && !isEditingBudget ? (
+                <>
+                  <Meter ratio={spentRatio} />
+                  <div className="mt-2.5 flex justify-between text-xs text-bone-muted">
+                    <span>{spentRatio.toFixed(0)}% of budget</span>
+                    <span>${remaining?.toFixed(2)} left</span>
+                  </div>
+                </>
+              ) : isEditingBudget ? (
+                <form
+                  className="flex flex-wrap items-center gap-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    commitBudgetDraft();
+                  }}
+                >
+                  <label className="flex items-center gap-1 rounded-full border border-hairline bg-background px-3 py-1.5 text-sm text-bone-muted">
+                    $
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={budgetDraft}
+                      onChange={(event) => setBudgetDraft(event.target.value)}
+                      className="w-20 bg-transparent text-bone outline-none"
+                      aria-label="Monthly budget"
+                      autoFocus
+                    />
+                  </label>
+                  <button type="submit" className="rounded-full bg-sage px-3 py-1.5 text-xs font-medium text-bone">
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingBudget(false)}
+                    className="text-xs text-bone-muted hover:text-bone"
+                  >
+                    Cancel
+                  </button>
+                  {budget != null && (
+                    <button
+                      type="button"
+                      onClick={() => saveBudgetValue(null)}
+                      className="text-xs text-bone-muted hover:text-bone"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBudgetDraft("200");
+                    setIsEditingBudget(true);
+                  }}
+                  className="text-sm text-sage-soft underline-offset-4 transition hover:text-bone hover:underline"
+                >
+                  Set a monthly budget
+                </button>
+              )}
+              <p className={`mt-3 text-[13px] ${isOverBudget ? "text-danger" : "text-bone-muted"}`}>
                 {!hasSpend
-                  ? "Scan or set a tool to project month-end spend."
-                  : isOverPace
-                    ? `Projected $${projected.toFixed(0)} by ${monthEnd} — $${overspend.toFixed(0)} over budget`
-                    : `Projected $${projected.toFixed(0)} by ${monthEnd}`}
+                  ? "Scan or set a tool to see month-end outlook."
+                  : isOverBudget
+                    ? `Outlook $${projected.toFixed(0)} by ${monthEnd} — $${overspend.toFixed(0)} over budget`
+                    : `Outlook $${projected.toFixed(0)} by ${monthEnd}`}
               </p>
             </div>
           </div>
@@ -1093,21 +1324,26 @@ export default function Dashboard() {
             <p className="mt-6 text-sm leading-relaxed text-bone-muted">
               {trackedCount === 0
                 ? "Nothing tracked yet. Scan OpenAI/Anthropic or tap a card below."
-                : "Amounts you save update your total and projection instantly."}
+                : "Amounts you save update your total and outlook instantly."}
             </p>
           </div>
 
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-7">
             <div className="flex items-center justify-between">
-              <Eyebrow>Founding plan</Eyebrow>
-              <span className="rounded-full bg-clay/20 px-2.5 py-1 text-[11px] font-medium text-clay">$12/mo</span>
+              <Eyebrow>Month-end outlook</Eyebrow>
+              <span className="rounded-full bg-bone/10 px-2.5 py-1 text-[11px] font-medium text-bone-muted">
+                by {monthEnd}
+              </span>
             </div>
             <div className="mt-4 flex items-baseline gap-2">
-              <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-bone">$12</span>
-              <span className="text-sm text-bone-muted">cloud sync</span>
+              <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-bone">
+                ${hasSpend ? projected.toFixed(0) : "0"}
+              </span>
             </div>
             <p className="mt-6 text-sm leading-relaxed text-bone-muted">
-              Free covers scanning on this device. Upgrade for sync across devices and the locked founding price.
+              {!hasSpend
+                ? "Fixed plans stay flat. Usage-based spend is paced to month-end."
+                : `$${fixedTracked.toFixed(0)} fixed + usage paced from $${usageTracked.toFixed(0)} so far.`}
             </p>
           </div>
         </section>
@@ -1118,11 +1354,17 @@ export default function Dashboard() {
               <Eyebrow>Your AI tools</Eyebrow>
               <button
                 type="button"
-                onClick={() => openManualCorrection("ChatGPT Plus")}
+                onClick={() => {
+                  const firstUnset =
+                    services.find(
+                      (service) => serviceAmounts[service.name] === undefined,
+                    )?.name ?? "OpenAI API";
+                  openManualCorrection(firstUnset);
+                }}
                 className="inline-flex items-center gap-1 text-sm text-sage-soft transition hover:text-bone"
               >
-                <Plus className="h-3.5 w-3.5" />
-                Add
+                <PencilLine className="h-3.5 w-3.5" />
+                Set amount
               </button>
             </div>
             <p className="mt-2 text-[12px] text-bone-muted">
@@ -1201,7 +1443,8 @@ export default function Dashboard() {
                 </span>
               </div>
               <p className="mt-3 text-[14px] leading-relaxed text-bone-muted">
-                Free: scan + manual tools on this device. Paid: cloud sync and the locked founding price.
+                Scanning and manual tracking stay free on this device. Upgrade
+                only if you want cloud sync and the locked founding price.
               </p>
               <ul className="mt-5 space-y-3">
                 {PRO_FEATURES.map(({ icon: Icon, text }) => (
@@ -1222,26 +1465,13 @@ export default function Dashboard() {
                   Secure checkout via Stripe
                 </p>
                 {!isLoggedIn && (
-                  <>
-                    <div className="relative py-1 text-center text-[11px] uppercase tracking-wider text-bone-muted/70">
-                      <span className="relative z-10 bg-[var(--surface)] px-2">or free magic-link sign-in</span>
-                      <span className="absolute inset-x-0 top-1/2 h-px bg-hairline" />
-                    </div>
-                    <WaitlistForm
-                      email={waitlistEmail}
-                      onEmailChange={setWaitlistEmail}
-                      submitted={waitlistSubmitted}
-                      isSubmitting={isWaitlistSubmitting}
-                      onSubmit={handleWaitlistSubmit}
-                      variant="default"
-                      submitLabel="Email me a sign-in link"
-                      submittingLabel="Sending link…"
-                      successMessage="Check your email for a magic link to sign in."
-                    />
-                    {waitlistError && (
-                      <p className="mt-2 text-center text-sm text-warning">{waitlistError}</p>
-                    )}
-                  </>
+                  <button
+                    type="button"
+                    onClick={openSignIn}
+                    className="flex w-full items-center justify-center rounded-full border border-hairline px-6 py-3 text-sm font-medium text-bone-muted transition hover:border-sage-soft/40 hover:text-bone"
+                  >
+                    Sign in free for sync
+                  </button>
                 )}
               </div>
             </div>
@@ -1267,6 +1497,18 @@ export default function Dashboard() {
           onClose={() => setIsManualCorrectionOpen(false)}
           onSave={saveManualCorrection}
           error={manualError}
+        />
+      )}
+
+      {isSignInOpen && !isLoggedIn && (
+        <SignInModal
+          email={waitlistEmail}
+          onEmailChange={setWaitlistEmail}
+          submitted={waitlistSubmitted}
+          isSubmitting={isWaitlistSubmitting}
+          onSubmit={handleWaitlistSubmit}
+          error={waitlistError}
+          onClose={() => setIsSignInOpen(false)}
         />
       )}
     </div>
