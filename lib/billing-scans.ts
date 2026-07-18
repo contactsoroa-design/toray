@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-/** Built-in catalog — users can also add any custom tool name. */
+/** Built-in catalog. Custom names are Pro-only (managed in the dashboard). */
 export const PRESET_SERVICES = [
   "OpenAI API",
   "Anthropic API",

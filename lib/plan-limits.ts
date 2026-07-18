@@ -57,6 +57,11 @@ export function canExportCsv(isFounding: boolean): boolean {
   return isFounding;
 }
 
+/** Custom tool names (add / edit / delete) are Pro-only. Free uses presets. */
+export function canManageCustomTools(isFounding: boolean): boolean {
+  return isFounding;
+}
+
 export function canSeeFullOutlook(isFounding: boolean): boolean {
   return isFounding;
 }

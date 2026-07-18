@@ -43,6 +43,7 @@ import {
 import {
   budgetExceedsFreeCap,
   canExportCsv,
+  canManageCustomTools,
   canSeeFullOutlook,
   canSeeStackPulse,
   canUseBudget,
@@ -236,7 +237,7 @@ const SCAN_STEPS = [
 const PRO_FEATURES = [
   {
     icon: Plus,
-    text: `Unlimited tools (Free caps at ${FREE_TOOL_LIMIT})`,
+    text: `Custom tools + unlimited presets (Free: ${FREE_TOOL_LIMIT} presets only)`,
   },
   {
     icon: ScanLine,
@@ -682,6 +683,7 @@ function ManualCorrectionModal({
   isCustomMode,
   customName,
   isUsageBased,
+  canUseCustomTools,
   onAmountChange,
   onPeriodChange,
   onServiceChange,
@@ -694,6 +696,7 @@ function ManualCorrectionModal({
   canClear,
   onDeleteCustom,
   canDeleteCustom,
+  onRequestCustomUpgrade,
   error,
 }: {
   amount: string;
@@ -703,6 +706,7 @@ function ManualCorrectionModal({
   isCustomMode: boolean;
   customName: string;
   isUsageBased: boolean;
+  canUseCustomTools: boolean;
   onAmountChange: (value: string) => void;
   onPeriodChange: (value: string) => void;
   onServiceChange: (value: ServiceName) => void;
@@ -715,6 +719,7 @@ function ManualCorrectionModal({
   canClear?: boolean;
   onDeleteCustom?: () => void;
   canDeleteCustom?: boolean;
+  onRequestCustomUpgrade?: () => void;
   error: string | null;
 }) {
   return (
@@ -739,8 +744,9 @@ function ManualCorrectionModal({
               Set the amount yourself
             </h2>
             <p className="mt-2 text-sm leading-relaxed text-bone-muted">
-              Pick a preset or add any tool — Gemini, Grok, Runway, Notion AI,
-              whatever you actually pay for.
+              {canUseCustomTools
+                ? "Pick a preset or add any tool — Gemini, Grok, Runway, Notion AI, whatever you actually pay for."
+                : "Pick from the free presets. Custom tool names unlock with ToRay Pro."}
             </p>
           </div>
           <button
@@ -756,7 +762,7 @@ function ManualCorrectionModal({
         <div className="mt-6 grid gap-4">
           <div className="grid gap-1.5 text-sm text-bone-muted">
             <span>Service</span>
-            {!isCustomMode ? (
+            {!isCustomMode || !canUseCustomTools ? (
               <>
                 <select
                   value={service}
@@ -769,13 +775,23 @@ function ManualCorrectionModal({
                     </option>
                   ))}
                 </select>
-                <button
-                  type="button"
-                  onClick={() => onCustomModeChange(true)}
-                  className="mt-1 justify-self-start text-[13px] text-sage-soft underline-offset-4 hover:underline"
-                >
-                  + Add a custom tool
-                </button>
+                {canUseCustomTools ? (
+                  <button
+                    type="button"
+                    onClick={() => onCustomModeChange(true)}
+                    className="mt-1 justify-self-start text-[13px] text-sage-soft underline-offset-4 hover:underline"
+                  >
+                    + Add a custom tool
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onRequestCustomUpgrade}
+                    className="mt-1 justify-self-start text-[13px] text-sage-soft underline-offset-4 hover:underline"
+                  >
+                    + Custom tool — ToRay Pro
+                  </button>
+                )}
               </>
             ) : (
               <>
@@ -959,22 +975,28 @@ export default function Dashboard() {
   const cloudHydratedForRef = useRef<string | null>(null);
   const clearingDeviceOnSignOutRef = useRef(false);
 
+  const allowCustomTools = canManageCustomTools(isFounding);
+
   const catalog: ToolDef[] = (() => {
     const base: ToolDef[] = [
       ...PRESET_TOOLS,
-      ...customTools.map((tool, index) => toolFromCustom(tool, index)),
+      ...(allowCustomTools
+        ? customTools.map((tool, index) => toolFromCustom(tool, index))
+        : []),
     ];
     const known = new Set(base.map((tool) => tool.name));
-    const extras: ToolDef[] = Object.keys(serviceAmounts)
-      .filter((name) => !known.has(name))
-      .map((name) => ({
-        name,
-        type: "Custom",
-        suggestedAmount: 0,
-        isUsageBased: true,
-        accent: "bg-sage/25 text-sage-soft",
-        origin: "custom" as const,
-      }));
+    const extras: ToolDef[] = allowCustomTools
+      ? Object.keys(serviceAmounts)
+          .filter((name) => !known.has(name))
+          .map((name) => ({
+            name,
+            type: "Custom",
+            suggestedAmount: 0,
+            isUsageBased: true,
+            accent: "bg-sage/25 text-sage-soft",
+            origin: "custom" as const,
+          }))
+      : [];
     return [...base, ...extras];
   })();
 
@@ -1018,7 +1040,12 @@ export default function Dashboard() {
     budgetBasis,
   );
   const isScanning = scanStatus === "scanning";
-  const trackedCount = Object.keys(serviceAmounts).length;
+  // Free plan only counts presets toward the tool cap (custom names are Pro-only).
+  const trackedCount = isFounding
+    ? Object.keys(serviceAmounts).length
+    : Object.keys(serviceAmounts).filter((name) =>
+        (PRESET_SERVICES as readonly string[]).includes(name),
+      ).length;
   const monthEnd = endOfMonthLabel();
   const hasSpend = spent > 0 || trackedCount > 0;
   const usageTracked = catalog
@@ -1611,6 +1638,12 @@ export default function Dashboard() {
   }
 
   function deleteCustomTool(name: ServiceName) {
+    if (!canManageCustomTools(isFounding)) {
+      promptFoundingUpgrade(
+        foundingUpgradeHint("Custom tools"),
+      );
+      return;
+    }
     const isCustom = customTools.some(
       (tool) => tool.name.toLowerCase() === name.toLowerCase(),
     );
@@ -1643,7 +1676,12 @@ export default function Dashboard() {
     period?: string | null,
     options?: { custom?: boolean },
   ) {
-    const custom = Boolean(options?.custom);
+    const wantsCustom = Boolean(options?.custom);
+    if (wantsCustom && !canManageCustomTools(isFounding)) {
+      promptFoundingUpgrade(foundingUpgradeHint("Custom tools"));
+      return;
+    }
+    const custom = wantsCustom;
     const resolvedService = custom
       ? service || "OpenAI API"
       : service || "OpenAI API";
@@ -1726,6 +1764,12 @@ export default function Dashboard() {
     const isPreset = (PRESET_SERVICES as readonly string[]).includes(
       resolvedName,
     );
+
+    if (!isPreset && !canManageCustomTools(isFounding)) {
+      setManualError(foundingUpgradeHint("Custom tools"));
+      promptFoundingUpgrade(foundingUpgradeHint("Custom tools"));
+      return;
+    }
 
     if (!isPreset && !existingCustom) {
       const nextCustom: CustomToolPref[] = [
@@ -1836,7 +1880,9 @@ export default function Dashboard() {
       ) {
         throw new Error(
           result.error ??
-            "This does not look like a clear supported billing screen. Use Add tool to enter any provider manually.",
+            isFounding
+              ? "This does not look like a clear supported billing screen. Use Add tool to enter any provider manually."
+              : "This does not look like a clear supported billing screen. Set a preset amount, or upgrade for custom tools.",
         );
       }
 
@@ -2098,9 +2144,9 @@ export default function Dashboard() {
             </h1>
             <p className="mt-4 max-w-md text-[15px] leading-relaxed text-bone-muted">
               Free: scan OpenAI or Anthropic, track up to {FREE_TOOL_LIMIT}{" "}
-              tools, and set a budget up to ${FREE_BUDGET_CAP}/mo. ToRay Pro
-              unlocks unlimited tools & budget, Gemini/Grok Vision, outlook,
-              Stack Pulse, and CSV.
+              presets, and set a budget up to ${FREE_BUDGET_CAP}/mo. ToRay Pro
+              unlocks custom tools, unlimited tracking & budget, Gemini/Grok
+              Vision, outlook, Stack Pulse, and CSV.
             </p>
             <p className="mt-3 text-[13px] text-bone-muted">
               Screenshots are analyzed securely and not stored by ToRay. Totals
@@ -2168,7 +2214,7 @@ export default function Dashboard() {
                     className="mt-3 inline-flex items-center gap-1.5 text-[13px] text-sage-soft underline-offset-4 transition hover:text-bone hover:underline"
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    Add any tool manually
+                    {isFounding ? "Add any tool manually" : "Set a preset amount"}
                   </button>
                 </>
               )}
@@ -2453,7 +2499,7 @@ export default function Dashboard() {
             </div>
             <p className="mt-6 text-sm leading-relaxed text-bone-muted">
               {trackedCount === 0
-                ? `Track up to ${FREE_TOOL_LIMIT} tools free — then ToRay Pro for your full stack.`
+                ? `Track up to ${FREE_TOOL_LIMIT} presets free — then ToRay Pro for custom tools and your full stack.`
                 : !isFounding && trackedCount >= FREE_TOOL_LIMIT
                   ? `Free limit reached. Unlimited tools with ${FOUNDING_PLAN_LABEL} — $12/mo.`
                   : !isFounding
@@ -2694,19 +2740,23 @@ export default function Dashboard() {
                 <button
                   type="button"
                   onClick={() =>
-                    openManualCorrection("", undefined, null, { custom: true })
+                    isFounding
+                      ? openManualCorrection("", undefined, null, {
+                          custom: true,
+                        })
+                      : openManualCorrection("OpenAI API")
                   }
                   className="inline-flex items-center gap-1 text-sm text-sage-soft transition hover:text-bone"
                 >
                   <Plus className="h-3.5 w-3.5" />
-                  Add tool
+                  {isFounding ? "Add tool" : "Track preset"}
                 </button>
               </div>
             </div>
             <p className="mt-2 text-[12px] text-bone-muted">
               {isFounding
                 ? "Tracked tools stay on top. Hide the rest — or add any name you pay for."
-                : `Free tracks ${FREE_TOOL_LIMIT} tools. Add more with ${FOUNDING_PLAN_LABEL}.`}
+                : `Free tracks ${FREE_TOOL_LIMIT} presets. Custom names unlock with ${FOUNDING_PLAN_LABEL}.`}
             </p>
 
             {!hasSpend && (
@@ -2728,15 +2778,31 @@ export default function Dashboard() {
                     + {name}
                   </button>
                 ))}
-                <button
-                  type="button"
-                  onClick={() =>
-                    openManualCorrection("", undefined, null, { custom: true })
-                  }
-                  className="rounded-full border border-sage/40 bg-sage/10 px-3 py-1.5 text-[12px] text-sage-soft transition hover:text-bone"
-                >
-                  + Custom tool
-                </button>
+                {isFounding ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openManualCorrection("", undefined, null, {
+                        custom: true,
+                      })
+                    }
+                    className="rounded-full border border-sage/40 bg-sage/10 px-3 py-1.5 text-[12px] text-sage-soft transition hover:text-bone"
+                  >
+                    + Custom tool
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      promptFoundingUpgrade(
+                        foundingUpgradeHint("Custom tools"),
+                      )
+                    }
+                    className="rounded-full border border-sage/40 bg-sage/10 px-3 py-1.5 text-[12px] text-sage-soft transition hover:text-bone"
+                  >
+                    + Custom tool — Pro
+                  </button>
+                )}
               </div>
             )}
 
@@ -2864,7 +2930,7 @@ export default function Dashboard() {
               <p className="mt-3 text-[14px] leading-relaxed text-bone-muted">
                 {isFounding
                   ? "Thank you — ToRay Pro is active. Unlimited tools & budget, Gemini/Grok Vision, outlook, Stack Pulse, and CSV are unlocked."
-                  : `Free: OpenAI/Anthropic Vision, ${FREE_TOOL_LIMIT} tools, budgets up to $${FREE_BUDGET_CAP}/mo. ${FOUNDING_PLAN_LABEL} unlocks the full operating view of your stack.`}
+                  : `Free: OpenAI/Anthropic Vision, ${FREE_TOOL_LIMIT} presets, budgets up to $${FREE_BUDGET_CAP}/mo. ${FOUNDING_PLAN_LABEL} unlocks custom tools and the full operating view.`}
               </p>
               {foundingVerifyMessage && (
                 <p className="mt-3 rounded-2xl border border-mint/30 bg-mint/10 px-3 py-2 text-[13px] text-mint">
@@ -2979,6 +3045,7 @@ export default function Dashboard() {
           isCustomMode={isCustomMode}
           customName={customName}
           isUsageBased={manualUsageBased}
+          canUseCustomTools={allowCustomTools}
           onAmountChange={setManualAmount}
           onPeriodChange={setManualPeriod}
           onServiceChange={(name) => {
@@ -3007,6 +3074,7 @@ export default function Dashboard() {
             )
           }
           canDeleteCustom={
+            allowCustomTools &&
             !isCustomMode &&
             customTools.some(
               (tool) =>
@@ -3014,6 +3082,9 @@ export default function Dashboard() {
             )
           }
           onDeleteCustom={() => deleteCustomTool(manualService)}
+          onRequestCustomUpgrade={() =>
+            promptFoundingUpgrade(foundingUpgradeHint("Custom tools"))
+          }
           error={manualError}
         />
       )}
