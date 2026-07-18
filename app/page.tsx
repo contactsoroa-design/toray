@@ -36,14 +36,20 @@ import {
   type CustomToolPref,
 } from "@/lib/dashboard-prefs";
 import {
+  budgetExceedsFreeCap,
   canExportCsv,
   canSeeFullOutlook,
+  canSeeStackPulse,
   canUseBudget,
+  clampBudgetForPlan,
   FOUNDING_CTA_LABEL,
   FOUNDING_PLAN_LABEL,
+  FREE_BUDGET_CAP,
   FREE_TOOL_LIMIT,
+  freeBudgetCapMessage,
   freeToolLimitMessage,
   foundingUpgradeHint,
+  maxBudgetForPlan,
   wouldExceedFreeToolLimit,
 } from "@/lib/plan-limits";
 import {
@@ -234,13 +240,64 @@ const PRO_FEATURES = [
   },
   {
     icon: Radar,
-    text: "Month-end outlook, budget coaching, and CSV export",
+    text: "Month-end outlook + Stack Pulse (burn rate, top tool, pace)",
   },
   {
     icon: Shield,
-    text: "ToRay Pro price locked at $12/mo",
+    text: `Unlimited budget (Free caps at $${FREE_BUDGET_CAP}/mo) + CSV export`,
   },
 ];
+
+type StackPulse = {
+  dailyBurn: number;
+  topTool: string | null;
+  topShare: number;
+  daysUntilBudget: number | null;
+  paceLabel: string;
+};
+
+function computeStackPulse(
+  amounts: Record<string, number>,
+  spent: number,
+  projected: number,
+  budget: number | null,
+): StackPulse {
+  const now = new Date();
+  const dayOfMonth = now.getDate();
+  const daysInMonth = new Date(
+    now.getFullYear(),
+    now.getMonth() + 1,
+    0,
+  ).getDate();
+  const dailyBurn =
+    dayOfMonth > 0 ? Math.round((spent / dayOfMonth) * 100) / 100 : 0;
+
+  const ranked = Object.entries(amounts).sort((a, b) => b[1] - a[1]);
+  const total = ranked.reduce((sum, [, value]) => sum + value, 0);
+  const topTool = ranked[0]?.[0] ?? null;
+  const topShare =
+    total > 0 && ranked[0]
+      ? Math.round((ranked[0][1] / total) * 100)
+      : 0;
+
+  let daysUntilBudget: number | null = null;
+  let paceLabel = "Add spend to see your pace.";
+  if (budget != null && budget > 0 && dailyBurn > 0) {
+    const daysToHit = Math.ceil(budget / dailyBurn);
+    daysUntilBudget = daysToHit;
+    if (projected > budget) {
+      paceLabel = `Outlook overshoots by $${Math.round(projected - budget)} — cut or raise budget.`;
+    } else if (daysToHit <= daysInMonth) {
+      paceLabel = `At today's burn, you hit $${budget} around day ${Math.min(daysToHit, daysInMonth)}.`;
+    } else {
+      paceLabel = `On pace to finish under $${budget} this month.`;
+    }
+  } else if (dailyBurn > 0) {
+    paceLabel = `Burning ~$${dailyBurn.toFixed(0)}/day so far this month.`;
+  }
+
+  return { dailyBurn, topTool, topShare, daysUntilBudget, paceLabel };
+}
 
 function easeOutCubic(t: number) {
   return 1 - Math.pow(1 - t, 3);
@@ -916,17 +973,27 @@ export default function Dashboard() {
 
   const animatedSpent = useAnimatedNumber(spent);
   const projected = computeProjectedSpend(serviceAmounts, catalog);
-  const budgetBasis = budget && budget > 0 ? budget : null;
+  const showFullOutlook = canSeeFullOutlook(isFounding);
+  const showStackPulse = canSeeStackPulse(isFounding);
+  const effectiveBudget = clampBudgetForPlan(isFounding, budget);
+  const budgetBasis = effectiveBudget && effectiveBudget > 0 ? effectiveBudget : null;
+  const budgetCompare = showFullOutlook ? projected : spent;
   const meterRatio = budgetBasis
-    ? Math.min((projected / budgetBasis) * 100, 100)
+    ? Math.min((budgetCompare / budgetBasis) * 100, 100)
     : 0;
   const remaining =
-    budgetBasis != null ? Math.max(budgetBasis - projected, 0) : null;
+    budgetBasis != null ? Math.max(budgetBasis - budgetCompare, 0) : null;
   const overspend =
     budgetBasis != null
-      ? Math.round((projected - budgetBasis) * 100) / 100
+      ? Math.round((budgetCompare - budgetBasis) * 100) / 100
       : 0;
-  const isOverBudget = budgetBasis != null && projected > budgetBasis;
+  const isOverBudget = budgetBasis != null && budgetCompare > budgetBasis;
+  const stackPulse = computeStackPulse(
+    serviceAmounts,
+    spent,
+    projected,
+    budgetBasis,
+  );
   const isScanning = scanStatus === "scanning";
   const trackedCount = Object.keys(serviceAmounts).length;
   const monthEnd = endOfMonthLabel();
@@ -964,8 +1031,10 @@ export default function Dashboard() {
   }) {
     const merged = { ...currentPrefs(), ...next };
     if (next.budget !== undefined) {
-      setBudget(merged.budget);
-      writeBudget(merged.budget);
+      const clamped = clampBudgetForPlan(merged.isFounding, merged.budget);
+      merged.budget = clamped;
+      setBudget(clamped);
+      writeBudget(clamped);
     }
     if (next.hiddenTools !== undefined) {
       setHiddenTools(merged.hiddenTools);
@@ -1002,7 +1071,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     const local = readLocalPrefs();
-    setBudget(local.budget);
+    setBudget(clampBudgetForPlan(local.isFounding, local.budget));
     setHiddenTools(local.hiddenTools);
     setCustomTools(local.customTools);
     setIsFounding(local.isFounding);
@@ -1059,7 +1128,7 @@ export default function Dashboard() {
       }
     }
 
-    async function refreshFoundingStatus() {
+    async function refreshFoundingStatus(): Promise<boolean | null> {
       try {
         const response = await fetch("/api/founding/status");
         const result = (await response.json()) as {
@@ -1070,10 +1139,12 @@ export default function Dashboard() {
           const next = Boolean(result.isFounding);
           setIsFounding(next);
           writeFounding(next);
+          return next;
         }
       } catch {
         // Keep local preference if the status endpoint is unavailable.
       }
+      return null;
     }
 
     async function hydrateDashboard() {
@@ -1128,14 +1199,19 @@ export default function Dashboard() {
           toray_founding?: boolean;
         },
       );
-      setBudget(remotePrefs.budget);
       setHiddenTools(remotePrefs.hiddenTools);
       setCustomTools(remotePrefs.customTools);
-      writeBudget(remotePrefs.budget);
       writeHiddenTools(remotePrefs.hiddenTools);
       writeCustomTools(remotePrefs.customTools);
 
-      await refreshFoundingStatus();
+      const foundingNow =
+        (await refreshFoundingStatus()) ?? remotePrefs.isFounding;
+      const clampedBudget = clampBudgetForPlan(
+        foundingNow,
+        remotePrefs.budget,
+      );
+      setBudget(clampedBudget);
+      writeBudget(clampedBudget);
 
       const remoteHistory = await fetchUserBillingScans(supabase);
       const merged = mergeBillingScanHistories(localHistory, remoteHistory);
@@ -1264,7 +1340,23 @@ export default function Dashboard() {
       setIsEditingBudget(false);
       return;
     }
+    if (budgetExceedsFreeCap(isFounding, parsed)) {
+      promptFoundingUpgrade(freeBudgetCapMessage());
+      setBudgetDraft(String(FREE_BUDGET_CAP));
+      return;
+    }
     persistPrefs({ budget: Math.round(parsed * 100) / 100 });
+    setIsEditingBudget(false);
+  }
+
+  function applySuggestedBudget(raw: number) {
+    if (budgetExceedsFreeCap(isFounding, raw)) {
+      promptFoundingUpgrade(freeBudgetCapMessage());
+      persistPrefs({ budget: FREE_BUDGET_CAP });
+      setIsEditingBudget(false);
+      return;
+    }
+    persistPrefs({ budget: raw });
     setIsEditingBudget(false);
   }
 
@@ -1671,8 +1763,8 @@ export default function Dashboard() {
   }
 
   const stripeHref = buildStripeHref(userEmail);
-  const showFullOutlook = canSeeFullOutlook(isFounding);
   const showBudgetControls = canUseBudget(isFounding);
+  const budgetCap = maxBudgetForPlan(isFounding);
   const historyLabel = isFounding
     ? scanHistory.length === 0
       ? isLoggedIn
@@ -1764,9 +1856,10 @@ export default function Dashboard() {
               Know your AI burn before your card does.
             </h1>
             <p className="mt-4 max-w-md text-[15px] leading-relaxed text-bone-muted">
-              Free: scan OpenAI or Anthropic and track up to {FREE_TOOL_LIMIT}{" "}
-              tools on this device. To run a full stack — unlimited tools,
-              Gemini/Grok Vision, outlook, budget, and CSV — you need ToRay Pro at $12/mo.
+              Free: scan OpenAI or Anthropic, track up to {FREE_TOOL_LIMIT}{" "}
+              tools, and set a budget up to ${FREE_BUDGET_CAP}/mo. ToRay Pro
+              unlocks unlimited tools & budget, Gemini/Grok Vision, outlook,
+              Stack Pulse, and CSV.
             </p>
             <p className="mt-3 text-[13px] text-bone-muted">
               Screenshots are analyzed securely and not stored by ToRay. Totals
@@ -1893,11 +1986,11 @@ export default function Dashboard() {
             <div className="flex items-center justify-between gap-2">
               <Eyebrow>This month</Eyebrow>
               <div className="flex items-center gap-2">
-                {showBudgetControls && budget != null && !isEditingBudget && (
+                {showBudgetControls && budgetBasis != null && !isEditingBudget && (
                   <button
                     type="button"
                     onClick={() => {
-                      setBudgetDraft(String(Math.round(budget)));
+                      setBudgetDraft(String(Math.round(budgetBasis)));
                       setIsEditingBudget(true);
                     }}
                     className="rounded-full border border-hairline px-2.5 py-1 text-[11px] font-medium text-sage-soft transition hover:text-bone"
@@ -1910,7 +2003,7 @@ export default function Dashboard() {
                     ? "Empty"
                     : showBudgetControls && isOverBudget
                       ? "Over budget"
-                      : showBudgetControls && budget != null
+                      : showBudgetControls && budgetBasis != null
                         ? "On track"
                         : "Tracked"}
                 </span>
@@ -1920,31 +2013,22 @@ export default function Dashboard() {
               <span className={`font-serif text-4xl tracking-[-0.02em] tabular-nums transition-colors duration-500 ${scanStatus === "success" ? "text-mint" : "text-bone"}`}>
                 ${animatedSpent.toFixed(2)}
               </span>
-              {showBudgetControls && budget != null && !isEditingBudget ? (
+              {showBudgetControls && budgetBasis != null && !isEditingBudget ? (
                 <span className="text-sm tabular-nums text-bone-muted">
-                  spent · ${budget.toFixed(0)} budget
+                  spent · ${budgetBasis.toFixed(0)} budget
+                  {!isFounding ? ` · max $${FREE_BUDGET_CAP}` : ""}
                 </span>
               ) : null}
             </div>
             <div className="mt-6">
-              {!showBudgetControls ? (
-                <div>
-                  <p className="text-sm text-bone-muted">
-                    Spent so far on this device. Budget coaching unlocks with{" "}
-                    {FOUNDING_PLAN_LABEL}.
-                  </p>
-                  <a
-                    href={stripeHref}
-                    className="mt-3 inline-flex rounded-full border border-hairline px-3 py-1.5 text-[12px] text-sage-soft transition hover:text-bone"
-                  >
-                    Set a budget with {FOUNDING_PLAN_LABEL}
-                  </a>
-                </div>
-              ) : budget != null && !isEditingBudget ? (
+              {showBudgetControls && budgetBasis != null && !isEditingBudget ? (
                 <>
                   <Meter ratio={meterRatio} />
                   <div className="mt-2.5 flex justify-between text-xs text-bone-muted">
-                    <span>{meterRatio.toFixed(0)}% of budget (outlook)</span>
+                    <span>
+                      {meterRatio.toFixed(0)}% of budget
+                      {showFullOutlook ? " (outlook)" : " (spent)"}
+                    </span>
                     <span>
                       {remaining != null
                         ? `$${remaining.toFixed(0)} headroom`
@@ -1965,6 +2049,7 @@ export default function Dashboard() {
                     <input
                       type="number"
                       min="1"
+                      max={budgetCap ?? undefined}
                       step="1"
                       value={budgetDraft}
                       onChange={(event) => setBudgetDraft(event.target.value)}
@@ -2009,17 +2094,31 @@ export default function Dashboard() {
                   >
                     Set a monthly budget
                   </button>
-                  {hasSpend && (
+                  {hasSpend && showFullOutlook && (
                     <button
                       type="button"
                       onClick={() =>
-                        persistPrefs({
-                          budget: Math.ceil(projected / 10) * 10,
-                        })
+                        applySuggestedBudget(Math.ceil(projected / 10) * 10)
                       }
                       className="text-[12px] text-bone-muted underline-offset-2 transition hover:text-bone hover:underline"
                     >
                       Use outlook (${Math.ceil(projected / 10) * 10})
+                    </button>
+                  )}
+                  {hasSpend && !showFullOutlook && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        applySuggestedBudget(
+                          Math.min(
+                            FREE_BUDGET_CAP,
+                            Math.max(50, Math.ceil(spent / 10) * 10),
+                          ),
+                        )
+                      }
+                      className="text-[12px] text-bone-muted underline-offset-2 transition hover:text-bone hover:underline"
+                    >
+                      Suggest from spent
                     </button>
                   )}
                 </div>
@@ -2028,23 +2127,41 @@ export default function Dashboard() {
                 <>
                   <p className={`mt-3 text-[13px] ${isOverBudget ? "text-danger" : "text-bone-muted"}`}>
                     {!hasSpend
-                      ? "Scan or add a tool to see month-end outlook."
-                      : isOverBudget
-                        ? `Outlook $${projected.toFixed(0)} by ${monthEnd} — $${overspend.toFixed(0)} over.`
-                        : `Outlook $${projected.toFixed(0)} by ${monthEnd}`}
+                      ? "Scan or add a tool, then set a budget to stay honest."
+                      : showFullOutlook
+                        ? isOverBudget
+                          ? `Outlook $${projected.toFixed(0)} by ${monthEnd} — $${overspend.toFixed(0)} over.`
+                          : `Outlook $${projected.toFixed(0)} by ${monthEnd}`
+                        : isOverBudget
+                          ? `Spent $${spent.toFixed(0)} — $${overspend.toFixed(0)} over your free budget.`
+                          : budgetBasis
+                            ? `Free budget up to $${FREE_BUDGET_CAP}/mo · $${remaining?.toFixed(0) ?? 0} left vs spent.`
+                            : `Free budgets go up to $${FREE_BUDGET_CAP}/mo.`}
                   </p>
+                  {!isFounding && (
+                    <p className="mt-1 text-[12px] text-bone-muted">
+                      Need more than ${FREE_BUDGET_CAP}?{" "}
+                      <a
+                        href={stripeHref}
+                        className="text-sage-soft underline-offset-2 hover:text-bone hover:underline"
+                      >
+                        Unlimited with {FOUNDING_PLAN_LABEL}
+                      </a>
+                    </p>
+                  )}
                   {isOverBudget && (
                     <div className="mt-2 flex flex-wrap gap-2">
                       <button
                         type="button"
                         onClick={() => {
-                          const suggested = Math.ceil(projected / 10) * 10;
-                          persistPrefs({ budget: suggested });
-                          setIsEditingBudget(false);
+                          const suggested = showFullOutlook
+                            ? Math.ceil(projected / 10) * 10
+                            : Math.ceil(spent / 10) * 10;
+                          applySuggestedBudget(suggested);
                         }}
                         className="rounded-full border border-hairline px-3 py-1 text-[12px] text-sage-soft transition hover:text-bone"
                       >
-                        Raise budget to ${Math.ceil(projected / 10) * 10}
+                        Raise budget
                       </button>
                       <button
                         type="button"
@@ -2122,6 +2239,94 @@ export default function Dashboard() {
           </div>
         </section>
 
+        <section className="mt-4">
+          <div
+            className={`rounded-[28px] border p-6 md:p-7 ${
+              showStackPulse
+                ? "border-sage/35 bg-gradient-to-r from-sage/15 to-surface"
+                : "border-hairline bg-surface"
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Eyebrow>Stack Pulse</Eyebrow>
+              <span className="rounded-full bg-mint/15 px-2.5 py-1 text-[11px] font-medium text-mint">
+                {showStackPulse ? "Pro" : "Pro preview"}
+              </span>
+            </div>
+            {showStackPulse ? (
+              <>
+                <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div>
+                    <p className="text-[12px] text-bone-muted">Daily burn</p>
+                    <p className="mt-1 font-serif text-2xl tabular-nums text-bone">
+                      ${hasSpend ? stackPulse.dailyBurn.toFixed(2) : "0.00"}
+                      <span className="text-sm text-bone-muted"> /day</span>
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[12px] text-bone-muted">Top tool share</p>
+                    <p className="mt-1 font-serif text-2xl tabular-nums text-bone">
+                      {stackPulse.topTool
+                        ? `${stackPulse.topShare}%`
+                        : "—"}
+                    </p>
+                    <p className="mt-0.5 truncate text-[12px] text-bone-muted">
+                      {stackPulse.topTool ?? "Track a tool to see mix"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[12px] text-bone-muted">Budget pace</p>
+                    <p className="mt-1 font-serif text-2xl tabular-nums text-bone">
+                      {stackPulse.daysUntilBudget != null
+                        ? `Day ${stackPulse.daysUntilBudget}`
+                        : "—"}
+                    </p>
+                    <p className="mt-0.5 text-[12px] text-bone-muted">
+                      {budgetBasis ? "Hit budget at this burn" : "Set a budget"}
+                    </p>
+                  </div>
+                </div>
+                <p className="mt-4 text-sm leading-relaxed text-bone-muted">
+                  {stackPulse.paceLabel}
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="mt-5 grid grid-cols-1 gap-4 blur-[5px] select-none sm:grid-cols-3">
+                  <div>
+                    <p className="text-[12px] text-bone-muted">Daily burn</p>
+                    <p className="mt-1 font-serif text-2xl tabular-nums text-bone">
+                      $12.40
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[12px] text-bone-muted">Top tool share</p>
+                    <p className="mt-1 font-serif text-2xl tabular-nums text-bone">
+                      48%
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[12px] text-bone-muted">Budget pace</p>
+                    <p className="mt-1 font-serif text-2xl tabular-nums text-bone">
+                      Day 22
+                    </p>
+                  </div>
+                </div>
+                <p className="mt-4 text-sm text-bone-muted">
+                  See which tool is eating the month, your $/day burn, and when
+                  you&apos;ll hit budget — exclusive to {FOUNDING_PLAN_LABEL}.
+                </p>
+                <a
+                  href={stripeHref}
+                  className="mt-3 inline-flex rounded-full bg-sage px-4 py-2 text-sm font-medium text-bone transition hover:bg-sage-glow"
+                >
+                  Unlock Stack Pulse — $12/mo
+                </a>
+              </>
+            )}
+          </div>
+        </section>
+
         {trackedCount >= 2 && !isLoggedIn && (
           <div className="mt-6 rounded-[24px] border border-sage/30 bg-sage/10 px-5 py-4 md:px-6">
             <p className="font-serif text-lg text-bone">
@@ -2150,9 +2355,9 @@ export default function Dashboard() {
                 : "You&apos;re building a real stack — ToRay Pro is next"}
             </p>
             <p className="mt-1 text-sm text-bone-muted">
-              Free stops at {FREE_TOOL_LIMIT} tools and hides outlook, budget, CSV,
-              and Gemini/Grok Vision. {FOUNDING_PLAN_LABEL} at $12/mo unlocks the
-              rest.
+              Free stops at {FREE_TOOL_LIMIT} tools and ${FREE_BUDGET_CAP} budgets,
+              and hides outlook, Stack Pulse, CSV, and Gemini/Grok Vision.{" "}
+              {FOUNDING_PLAN_LABEL} at $12/mo unlocks the rest.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <a
@@ -2366,8 +2571,8 @@ export default function Dashboard() {
               </div>
               <p className="mt-3 text-[14px] leading-relaxed text-bone-muted">
                 {isFounding
-                  ? "Thank you — ToRay Pro is active. Unlimited tools, Gemini/Grok Vision, outlook, budget, and CSV are unlocked."
-                  : `Free gets you started (OpenAI/Anthropic Vision, ${FREE_TOOL_LIMIT} tools, Magic Link backup). Serious stacks need ${FOUNDING_PLAN_LABEL} at $12/mo.`}
+                  ? "Thank you — ToRay Pro is active. Unlimited tools & budget, Gemini/Grok Vision, outlook, Stack Pulse, and CSV are unlocked."
+                  : `Free: OpenAI/Anthropic Vision, ${FREE_TOOL_LIMIT} tools, budgets up to $${FREE_BUDGET_CAP}/mo. ${FOUNDING_PLAN_LABEL} unlocks the full operating view of your stack.`}
               </p>
               {foundingVerifyMessage && (
                 <p className="mt-3 rounded-2xl border border-mint/30 bg-mint/10 px-3 py-2 text-[13px] text-mint">
