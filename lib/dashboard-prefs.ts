@@ -91,6 +91,26 @@ export function writeFounding(isFounding: boolean) {
   else window.localStorage.removeItem(FOUNDING_KEY);
 }
 
+/** Wipe account-linked prefs from this browser after sign-out. */
+export function clearLocalAccountData(): {
+  hiddenTools: string[];
+} {
+  if (typeof window === "undefined") {
+    return { hiddenTools: [...DEFAULT_HIDDEN_PRESETS] };
+  }
+
+  window.localStorage.removeItem(BUDGET_KEY);
+  window.localStorage.removeItem(CUSTOM_TOOLS_KEY);
+  window.localStorage.removeItem(FOUNDING_KEY);
+  window.localStorage.removeItem(HIDDEN_TOOLS_KEY);
+  window.localStorage.removeItem(CATALOG_SEEDED_KEY);
+
+  const hiddenTools = [...DEFAULT_HIDDEN_PRESETS];
+  window.localStorage.setItem(HIDDEN_TOOLS_KEY, JSON.stringify(hiddenTools));
+  window.localStorage.setItem(CATALOG_SEEDED_KEY, "1");
+  return { hiddenTools };
+}
+
 function readJsonArray(key: string): string[] {
   try {
     const raw = window.localStorage.getItem(key);

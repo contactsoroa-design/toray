@@ -26,6 +26,7 @@ import {
   type ServiceName,
 } from "@/lib/billing-scans";
 import {
+  clearLocalAccountData,
   downloadSpendCsv,
   mergePrefs,
   persistPrefsToCloud,
@@ -951,6 +952,7 @@ export default function Dashboard() {
   >(null);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const cloudHydratedForRef = useRef<string | null>(null);
+  const clearingDeviceOnSignOutRef = useRef(false);
 
   const catalog: ToolDef[] = (() => {
     const base: ToolDef[] = [
@@ -1326,7 +1328,13 @@ export default function Dashboard() {
         setIsLoggedIn(false);
         setUserEmail(null);
         setCloudSyncStatus("idle");
-        setAuthNotice("Signed out. Totals on this device stay here until you sign in again.");
+        // handleSignOut already wiped the device; avoid a second conflicting notice.
+        if (!clearingDeviceOnSignOutRef.current) {
+          setAuthNotice(
+            "Signed out. Sign in again to restore your backed-up totals.",
+          );
+        }
+        clearingDeviceOnSignOutRef.current = false;
         return;
       }
 
@@ -1424,22 +1432,52 @@ export default function Dashboard() {
     setIsSignInOpen(true);
   }
 
+  function resetDeviceDashboard() {
+    window.localStorage.removeItem(SCAN_HISTORY_KEY);
+    const { hiddenTools: starterHidden } = clearLocalAccountData();
+    setScanHistory([]);
+    setServiceAmounts({});
+    setSpent(INITIAL_SPENT);
+    setBudget(null);
+    setCustomTools([]);
+    setHiddenTools(starterHidden);
+    setIsFounding(false);
+    setLastSyncedAt(null);
+    setPreviewUrl(null);
+    setScanMessage(null);
+    setScanStatus("idle");
+    setFoundingVerifyMessage(null);
+  }
+
   async function handleSignOut() {
     const supabase = supabaseRef.current ?? createClient();
     supabaseRef.current = supabase;
-    try {
-      await supabase.auth.signOut();
-    } catch {
-      // Still clear local session UI.
+
+    // Best-effort cloud save before wiping the device copy.
+    if (isLoggedIn) {
+      try {
+        await persistPrefsToCloud(supabase, currentPrefs());
+      } catch {
+        // Continue signing out even if the last sync fails.
+      }
     }
+
+    clearingDeviceOnSignOutRef.current = true;
+    resetDeviceDashboard();
     cloudHydratedForRef.current = null;
     setIsLoggedIn(false);
     setUserEmail(null);
     setCloudSyncStatus("idle");
     setIsSignInOpen(false);
     setAuthNotice(
-      "Signed out. Totals on this device stay here until you sign in again.",
+      "Signed out and cleared this device. Sign in again to restore your cloud backup.",
     );
+
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // Local UI already cleared.
+    }
   }
 
   function promptFoundingUpgrade(message: string) {
