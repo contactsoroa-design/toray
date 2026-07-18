@@ -49,7 +49,6 @@ import {
   freeBudgetCapMessage,
   freeToolLimitMessage,
   foundingUpgradeHint,
-  maxBudgetForPlan,
   wouldExceedFreeToolLimit,
 } from "@/lib/plan-limits";
 import {
@@ -706,6 +705,7 @@ function ManualCorrectionModal({
       aria-labelledby="manual-correction-title"
     >
       <form
+        noValidate
         onSubmit={onSave}
         className="w-full max-w-md rounded-[28px] border border-hairline bg-surface p-6 shadow-2xl md:p-8"
       >
@@ -814,9 +814,7 @@ function ManualCorrectionModal({
               <input
                 type="number"
                 inputMode="decimal"
-                min="0"
                 step="0.01"
-                required
                 value={amount}
                 onChange={(event) => onAmountChange(event.target.value)}
                 placeholder="0.00"
@@ -1764,7 +1762,6 @@ export default function Dashboard() {
 
   const stripeHref = buildStripeHref(userEmail);
   const showBudgetControls = canUseBudget(isFounding);
-  const budgetCap = maxBudgetForPlan(isFounding);
   const historyLabel = isFounding
     ? scanHistory.length === 0
       ? isLoggedIn
@@ -2038,6 +2035,7 @@ export default function Dashboard() {
                 </>
               ) : isEditingBudget ? (
                 <form
+                  noValidate
                   className="flex flex-wrap items-center gap-2"
                   onSubmit={(event) => {
                     event.preventDefault();
@@ -2048,9 +2046,8 @@ export default function Dashboard() {
                     $
                     <input
                       type="number"
-                      min="1"
-                      max={budgetCap ?? undefined}
                       step="1"
+                      inputMode="decimal"
                       value={budgetDraft}
                       onChange={(event) => setBudgetDraft(event.target.value)}
                       className="w-20 bg-transparent text-bone outline-none"
