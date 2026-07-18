@@ -21,9 +21,9 @@ const fraunces = Fraunces({
 });
 
 export const metadata: Metadata = {
-  title: "ToRay — Free Instant AI Billing Scanner (LIVE)",
+  title: "ToRay — Free Instant AI Billing Scanner",
   description:
-    "Drag & drop OpenAI or Anthropic billing screenshots to scan your AI spend instantly. No login required. Your data stays in your browser.",
+    "Scan OpenAI and Anthropic billing screenshots, track ChatGPT, Cursor, Midjourney and more. Free on this device — Founding Member adds cloud sync for $12/mo.",
 };
 
 export default function RootLayout({

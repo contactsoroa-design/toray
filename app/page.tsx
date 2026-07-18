@@ -23,25 +23,23 @@ import {
 import { createClient } from "@/lib/supabase/client";
 
 const BUDGET = 200;
+const INITIAL_SPENT = 0;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
 const PACE = 1.32;
-const IDLE_WASTE = 10.0;
 const SCAN_HISTORY_KEY = "toray-billing-scans";
 const STRIPE_URL =
   process.env.NEXT_PUBLIC_STRIPE_PAYMENT_LINK ??
   "https://buy.stripe.com/6oU14m0Lu92V2dL0dx9sk00";
 
-type ServiceStatus = "active" | "warning" | "paused";
 type ScanStatus = "idle" | "scanning" | "success" | "error";
 
 type Service = {
   name: SupportedService;
   type: string;
-  amount: number;
+  /** Prefill only — never shown as the user's spend until they save. */
+  suggestedAmount: number;
   isUsageBased: boolean;
-  renewal: string;
-  status: ServiceStatus;
   accent: string;
 };
 
@@ -49,78 +47,70 @@ const services: Service[] = [
   {
     name: "OpenAI API",
     type: "Usage-based",
-    amount: 68.2,
+    suggestedAmount: 50,
     isUsageBased: true,
-    renewal: "Scan screenshot or edit",
-    status: "warning",
     accent: "bg-clay/20 text-clay",
   },
   {
     name: "Anthropic API",
     type: "Usage-based",
-    amount: 24.3,
+    suggestedAmount: 40,
     isUsageBased: true,
-    renewal: "Scan screenshot or edit",
-    status: "active",
     accent: "bg-blush/20 text-blush",
   },
   {
     name: "ChatGPT Plus",
     type: "Subscription",
-    amount: 20.0,
+    suggestedAmount: 20,
     isUsageBased: false,
-    renewal: "Typical plan · $20/mo",
-    status: "active",
     accent: "bg-mint/20 text-mint",
   },
   {
     name: "Claude Pro",
     type: "Subscription",
-    amount: 20.0,
+    suggestedAmount: 20,
     isUsageBased: false,
-    renewal: "Typical plan · $20/mo",
-    status: "active",
     accent: "bg-blush/20 text-blush",
   },
   {
     name: "Cursor Pro",
     type: "Subscription",
-    amount: 20.0,
+    suggestedAmount: 20,
     isUsageBased: false,
-    renewal: "Typical plan · $20/mo",
-    status: "active",
     accent: "bg-sage/25 text-sage-soft",
   },
   {
     name: "Midjourney",
     type: "Subscription",
-    amount: 30.0,
+    suggestedAmount: 30,
     isUsageBased: false,
-    renewal: "Typical plan · $30/mo",
-    status: "active",
     accent: "bg-moss/25 text-sage-soft",
   },
   {
     name: "GitHub Copilot",
     type: "Subscription",
-    amount: 10.0,
+    suggestedAmount: 10,
     isUsageBased: false,
-    renewal: "Typical plan · $10/mo",
-    status: "paused",
     accent: "bg-bone/10 text-bone-muted",
   },
   {
     name: "Perplexity Pro",
     type: "Subscription",
-    amount: 20.0,
+    suggestedAmount: 20,
     isUsageBased: false,
-    renewal: "Typical plan · $20/mo",
-    status: "active",
     accent: "bg-clay/15 text-clay",
   },
 ];
 
-const INITIAL_SPENT = services.reduce((sum, service) => sum + service.amount, 0);
+const SERVICE_DEFAULTS = services.map((service) => ({
+  name: service.name,
+  amount: 0,
+}));
+
+function endOfMonthLabel(date = new Date()) {
+  const end = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+  return end.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
 
 function StripeCheckoutLink({
   children,
@@ -141,12 +131,6 @@ function StripeCheckoutLink({
   );
 }
 
-const statusConfig: Record<ServiceStatus, { label: string; chip: string }> = {
-  active: { label: "Active", chip: "bg-mint/15 text-mint" },
-  warning: { label: "Over pace", chip: "bg-clay/20 text-clay" },
-  paused: { label: "Idle 23 days", chip: "bg-bone/5 text-bone-muted" },
-};
-
 const SCAN_STEPS = [
   "Uploading securely…",
   "Reading your billing screen…",
@@ -154,10 +138,10 @@ const SCAN_STEPS = [
 ];
 
 const PRO_FEATURES = [
-  { icon: ScanLine, text: "Instant OpenAI & Anthropic billing screenshot scans" },
-  { icon: Radar, text: "One dashboard for AI burn across providers" },
-  { icon: BellRing, text: "End-of-month projection before your card surprises you" },
-  { icon: RefreshCw, text: "Unlimited smart scanning on the Founding plan" },
+  { icon: ScanLine, text: "Unlimited OpenAI & Anthropic screenshot scans" },
+  { icon: Radar, text: "Cloud sync so your totals follow you across devices" },
+  { icon: BellRing, text: "Founding Member price locked at $12/mo" },
+  { icon: RefreshCw, text: "Priority access to new providers as we add them" },
 ];
 
 function easeOutCubic(t: number) {
@@ -321,7 +305,7 @@ function MobileDesktopBridgeBanner({
   return (
     <section
       aria-labelledby="mobile-bridge-heading"
-      className="relative z-10 border-b border-clay/25 bg-gradient-to-br from-clay/20 via-surface to-sage/15"
+      className="relative z-10 border-b border-clay/25 bg-gradient-to-br from-clay/20 via-surface to-sage/15 md:hidden"
     >
       <div className="mx-auto max-w-6xl px-4 py-4 sm:px-6 sm:py-5">
         <div className="rounded-[24px] border border-clay/30 bg-surface-raised/90 p-4 shadow-[0_12px_40px_rgba(0,0,0,0.28)] sm:p-5 md:p-6">
@@ -337,10 +321,8 @@ function MobileDesktopBridgeBanner({
                 No OpenAI/Anthropic screenshot on your device right now?
               </h2>
               <p className="mt-2 text-[14px] leading-relaxed text-bone-muted sm:text-[15px]">
-                Enter your email below to get your free account and lock in our
-                $12/mo Founding Member price forever. We&apos;ll send a secure
-                magic link to your desktop so you can scan your first bill
-                instantly.
+                Email yourself a free account link for desktop. Scanning stays
+                free — Founding Member ($12/mo) adds cloud sync across devices.
               </p>
             </div>
 
@@ -491,8 +473,8 @@ function ManualCorrectionModal({
               Set the amount yourself
             </h2>
             <p className="mt-2 text-sm leading-relaxed text-bone-muted">
-              Use this if a screenshot is unclear or the detected value needs a
-              correction.
+              Set a subscription total or correct a scan. Suggested plan prices
+              are only a starting point.
             </p>
           </div>
           <button
@@ -609,8 +591,11 @@ export default function Dashboard() {
   const remaining = Math.max(BUDGET - animatedSpent, 0);
   const projected = Math.round(animatedSpent * PACE * 100) / 100;
   const overspend = Math.round((projected - BUDGET) * 100) / 100;
-  const isOverPace = overspend > 0;
+  const isOverPace = spent > 0 && overspend > 0;
   const isScanning = scanStatus === "scanning";
+  const trackedCount = Object.keys(serviceAmounts).length;
+  const monthEnd = endOfMonthLabel();
+  const hasSpend = spent > 0 || trackedCount > 0;
 
   useEffect(() => {
     const supabase = createClient();
@@ -641,7 +626,7 @@ export default function Dashboard() {
         const dashboard = applyHistoryToDashboard(
           merged,
           INITIAL_SPENT,
-          services,
+          SERVICE_DEFAULTS,
         );
 
         setScanHistory(dashboard.scanHistory);
@@ -659,7 +644,7 @@ export default function Dashboard() {
       const dashboard = applyHistoryToDashboard(
         localHistory,
         INITIAL_SPENT,
-        services,
+        SERVICE_DEFAULTS,
       );
       setScanHistory(dashboard.scanHistory);
       setServiceAmounts(dashboard.serviceAmounts);
@@ -736,11 +721,17 @@ export default function Dashboard() {
     document.getElementById("quick-scan")?.scrollIntoView({ behavior: "smooth" });
   }
 
+  function markUpdated() {
+    setLastSyncedAt(
+      new Date().toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+      }),
+    );
+  }
+
   function saveBillingScan(scan: BillingScan) {
-    const existingAmount =
-      serviceAmounts[scan.service] ??
-      services.find((service) => service.name === scan.service)?.amount ??
-      0;
+    const existingAmount = serviceAmounts[scan.service] ?? 0;
 
     setServiceAmounts((current) => ({
       ...current,
@@ -748,10 +739,11 @@ export default function Dashboard() {
     }));
     setSpent((current) => current - existingAmount + scan.amountUsd);
     setScanHistory((current) => {
-      const next = [scan, ...current].slice(0, 25);
+      const next = [scan, ...current].slice(0, 50);
       window.localStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(next));
       return next;
     });
+    markUpdated();
 
     const supabase = supabaseRef.current;
     if (supabase && isLoggedIn) {
@@ -764,11 +756,9 @@ export default function Dashboard() {
     amount?: number,
     period?: string | null,
   ) {
-    const currentAmount =
-      amount ??
-      serviceAmounts[service] ??
-      services.find((item) => item.name === service)?.amount ??
-      0;
+    const suggested =
+      services.find((item) => item.name === service)?.suggestedAmount ?? 0;
+    const currentAmount = amount ?? serviceAmounts[service] ?? suggested;
 
     setManualService(service);
     setManualAmount(currentAmount.toFixed(2));
@@ -794,15 +784,9 @@ export default function Dashboard() {
       confidence: "high",
       scannedAt: new Date().toISOString(),
     });
-    setLastSyncedAt(
-      new Date().toLocaleTimeString("en-US", {
-        hour: "numeric",
-        minute: "2-digit",
-      }),
-    );
     setScanStatus("success");
     setScanMessage(
-      `${manualService} · $${amount.toFixed(2)} saved from manual correction`,
+      `${manualService} · $${amount.toFixed(2)} saved to your dashboard`,
     );
     setIsManualCorrectionOpen(false);
   }
@@ -872,12 +856,6 @@ export default function Dashboard() {
       setScanMessage(
         `${serviceName} · $${amountUsd.toFixed(2)} saved to your dashboard`,
       );
-      setLastSyncedAt(
-        new Date().toLocaleTimeString("en-US", {
-          hour: "numeric",
-          minute: "2-digit",
-        }),
-      );
     } catch (error) {
       setScanStatus("error");
       setScanMessage(
@@ -911,7 +889,7 @@ export default function Dashboard() {
       <div aria-hidden className="pointer-events-none absolute -left-16 bottom-32 h-72 w-72 rounded-full bg-blush/10 blur-3xl" />
 
       <header className="relative z-10 border-b border-hairline">
-        <div className="mx-auto flex h-[72px] max-w-6xl items-center justify-between gap-4 px-6">
+        <div className="mx-auto flex h-[64px] max-w-6xl items-center justify-between gap-4 px-6">
           <div className="flex items-center gap-3">
             <LogoMark />
             <span className="font-serif text-[22px] tracking-[-0.02em] text-bone">
@@ -919,53 +897,40 @@ export default function Dashboard() {
             </span>
           </div>
 
-          <div className="flex min-w-0 flex-1 items-center justify-end gap-4">
-            <span className="hidden items-center gap-2 text-sm text-bone-muted lg:inline-flex">
+          <div className="flex items-center gap-3">
+            <span className="hidden items-center gap-2 text-sm text-bone-muted sm:inline-flex">
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-mint opacity-60" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-mint" />
               </span>
-              LIVE · Free Instant Scanner
+              Free to scan
             </span>
             {isLoggedIn ? (
-              <div className="hidden items-center gap-3 md:flex">
-                <span className="max-w-[180px] truncate text-sm text-bone-muted">
+              <div className="flex items-center gap-3">
+                <span className="hidden max-w-[160px] truncate text-sm text-bone-muted sm:block">
                   {userEmail}
                 </span>
                 <form action="/auth/signout" method="post">
                   <button
                     type="submit"
-                    className="rounded-full border border-hairline px-4 py-2.5 text-sm font-medium text-bone-muted transition duration-180 hover:border-sage-soft/40 hover:text-bone"
+                    className="rounded-full border border-hairline px-3 py-2 text-sm text-bone-muted transition hover:text-bone"
                   >
                     Sign out
                   </button>
                 </form>
               </div>
             ) : (
-              <div className="hidden max-w-xs md:block">
-                <WaitlistForm
-                  email={waitlistEmail}
-                  onEmailChange={setWaitlistEmail}
-                  submitted={waitlistSubmitted}
-                  isSubmitting={isWaitlistSubmitting}
-                  onSubmit={handleWaitlistSubmit}
-                  variant="compact"
-                  submitLabel="Get free account"
-                  submittingLabel="Sending link…"
-                  successMessage="Check your email for a magic link to your free account."
-                />
-              </div>
+              <button
+                type="button"
+                onClick={scrollToFounding}
+                className="rounded-full border border-hairline px-3 py-2 text-sm text-bone-muted transition hover:text-bone"
+              >
+                Sign in
+              </button>
             )}
-            <StripeCheckoutLink className="hidden rounded-full bg-sage px-4 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow sm:inline-flex">
-              Upgrade — $12/mo
+            <StripeCheckoutLink className="rounded-full bg-sage px-4 py-2 text-sm font-medium text-bone transition hover:bg-sage-glow">
+              $12/mo
             </StripeCheckoutLink>
-            <button
-              type="button"
-              onClick={scrollToScanner}
-              className="rounded-full border border-hairline px-4 py-2.5 text-sm font-medium text-bone transition duration-180 hover:border-sage-soft/40 md:hidden"
-            >
-              Scan now
-            </button>
           </div>
         </div>
       </header>
@@ -980,7 +945,7 @@ export default function Dashboard() {
       />
 
       <main className="relative z-10 mx-auto max-w-6xl px-6 pb-24">
-        <div className="flex items-end justify-between py-10 md:py-12">
+        <section className="grid grid-cols-1 items-start gap-8 py-8 lg:grid-cols-2 lg:gap-10 lg:py-10">
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-mint/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-mint">
@@ -990,38 +955,106 @@ export default function Dashboard() {
               <Eyebrow>Free Instant Scanner</Eyebrow>
             </div>
             <h1 className="mt-3 font-serif text-4xl font-medium tracking-[-0.02em] text-bone md:text-5xl">
-              Know your AI burn
-              <br className="hidden md:block" /> before your card does.
+              Know your AI burn before your card does.
             </h1>
-            <p className="mt-4 max-w-lg text-[15px] leading-relaxed text-bone-muted">
-              Drag &amp; drop an OpenAI or Anthropic billing screenshot to scan
-              your spend instantly. No login required — your data never leaves
-              this browser.
+            <p className="mt-4 max-w-md text-[15px] leading-relaxed text-bone-muted">
+              Drop an OpenAI or Anthropic billing screenshot to read this
+              month&apos;s total. Add ChatGPT, Cursor, Midjourney, and more by
+              hand. Free to use — sign in to sync across devices.
             </p>
-            <div className="mt-5 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={scrollToScanner}
-                className="rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow"
-              >
-                Scan a screenshot
-              </button>
-              <StripeCheckoutLink className="rounded-full border border-hairline px-5 py-2.5 text-sm font-medium text-bone-muted transition duration-180 hover:border-sage-soft/40 hover:text-bone">
-                Upgrade — $12/mo
-              </StripeCheckoutLink>
-            </div>
+            <p className="mt-3 text-[13px] text-bone-muted">
+              Screenshots are analyzed securely and not stored by ToRay. Totals
+              stay on this device until you sign in.
+            </p>
+            <p className="mt-6 text-sm text-bone-muted">
+              {lastSyncedAt ? `Last update ${lastSyncedAt}` : "Your dashboard starts empty."}
+            </p>
           </div>
-          <p className="hidden text-sm text-bone-muted md:block">
-            {lastSyncedAt ? `Last scan ${lastSyncedAt}` : "Ready to scan"}
-          </p>
-        </div>
+
+          <div id="quick-scan" className="rounded-[28px] border border-sage/35 bg-surface p-5 shadow-[0_20px_50px_rgba(0,0,0,0.25)] md:p-6">
+            <div className="flex items-center justify-between gap-3">
+              <Eyebrow>Scan now</Eyebrow>
+              <span className="text-[12px] text-mint">
+                {scanHistory.length} saved{isLoggedIn ? " · cloud" : " · this device"}
+              </span>
+            </div>
+
+            <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFileChange} />
+
+            <div
+              onDragOver={(e) => { e.preventDefault(); if (!isScanning) setIsDragging(true); }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={handleDrop}
+              className={`relative mt-4 flex min-h-[240px] flex-col items-center justify-center overflow-hidden rounded-[22px] border border-dashed px-5 text-center transition duration-180 ${isDragging ? "border-sage-soft bg-sage/15" : "border-hairline bg-background/40"} ${isScanning ? "pointer-events-none" : ""}`}
+            >
+              {isScanning && (
+                <span aria-hidden className="animate-toray-scan pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-sage-soft to-transparent" />
+              )}
+
+              {isScanning ? (
+                <ScanLoader stepIndex={scanStep} />
+              ) : (
+                <>
+                  {previewUrl && scanStatus === "success" ? (
+                    <div className="mb-3 overflow-hidden rounded-2xl border border-hairline">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={previewUrl} alt="Uploaded usage screenshot" className="h-16 w-28 object-cover opacity-80" />
+                    </div>
+                  ) : (
+                    <div className="mb-1 flex h-14 w-14 items-center justify-center rounded-full bg-sage/20">
+                      <ScanLine className={`h-6 w-6 transition-colors ${isDragging ? "text-sage-soft" : "text-sage-soft/70"}`} strokeWidth={1.5} />
+                    </div>
+                  )}
+                  <h2 className="mt-2 font-serif text-xl text-bone">Drop a billing screenshot</h2>
+                  <p className="mt-2 max-w-[280px] text-[13px] leading-relaxed text-bone-muted">
+                    OpenAI Platform or Anthropic Console. Instant Vision read — image not kept.
+                  </p>
+                  <button type="button" onClick={() => fileInputRef.current?.click()} className="mt-5 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition hover:bg-sage-glow">
+                    Choose file
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openManualCorrection()}
+                    className="mt-3 inline-flex items-center gap-1.5 text-[13px] text-sage-soft underline-offset-4 transition hover:text-bone hover:underline"
+                  >
+                    <PencilLine className="h-3.5 w-3.5" />
+                    Enter an amount manually
+                  </button>
+                </>
+              )}
+            </div>
+
+            {scanMessage && (
+              <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1">
+                <p className={`text-[13px] ${scanStatus === "error" ? "text-warning" : scanStatus === "success" ? "text-mint" : "text-bone-muted"}`}>
+                  {scanMessage}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const latestScan = scanHistory[0];
+                    openManualCorrection(
+                      latestScan?.service,
+                      latestScan?.amountUsd,
+                      latestScan?.billingPeriod,
+                    );
+                  }}
+                  className="inline-flex items-center gap-1 text-[13px] text-sage-soft underline-offset-4 transition hover:text-bone hover:underline"
+                >
+                  <PencilLine className="h-3.5 w-3.5" />
+                  {scanStatus === "success" ? "Correct amount" : "Enter manually"}
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
 
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-7">
             <div className="flex items-center justify-between">
               <Eyebrow>Spend / Budget</Eyebrow>
-              <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${isOverPace ? "bg-danger/20 text-danger" : "bg-sage/25 text-mint"}`}>
-                {isOverPace ? "Over pace" : "On track"}
+              <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${!hasSpend ? "bg-bone/10 text-bone-muted" : isOverPace ? "bg-danger/20 text-danger" : "bg-sage/25 text-mint"}`}>
+                {!hasSpend ? "Empty" : isOverPace ? "Over pace" : "On track"}
               </span>
             </div>
             <div className="mt-4 flex items-baseline gap-2">
@@ -1037,47 +1070,55 @@ export default function Dashboard() {
                 <span>${remaining.toFixed(2)} left</span>
               </div>
               <p className={`mt-3 text-[13px] ${isOverPace ? "text-danger" : "text-bone-muted"}`}>
-                {isOverPace
-                  ? `Projected $${projected.toFixed(0)} by Jul 31 — $${overspend.toFixed(0)} over budget`
-                  : `Projected $${projected.toFixed(0)} by Jul 31`}
+                {!hasSpend
+                  ? "Scan or set a tool to project month-end spend."
+                  : isOverPace
+                    ? `Projected $${projected.toFixed(0)} by ${monthEnd} — $${overspend.toFixed(0)} over budget`
+                    : `Projected $${projected.toFixed(0)} by ${monthEnd}`}
               </p>
             </div>
           </div>
 
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-7">
             <div className="flex items-center justify-between">
-              <Eyebrow>Idle spend found</Eyebrow>
-              <span className="rounded-full bg-clay/20 px-2.5 py-1 text-[11px] font-medium text-clay">Save now</span>
+              <Eyebrow>Tools tracked</Eyebrow>
+              <span className="rounded-full bg-sage/20 px-2.5 py-1 text-[11px] font-medium text-mint">
+                {trackedCount} set
+              </span>
             </div>
             <div className="mt-4 flex items-baseline gap-2">
-              <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-clay">${IDLE_WASTE.toFixed(2)}</span>
-              <span className="text-sm text-bone-muted">/mo</span>
+              <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-bone">{trackedCount}</span>
+              <span className="text-sm text-bone-muted">/ {services.length}</span>
             </div>
             <p className="mt-6 text-sm leading-relaxed text-bone-muted">
-              GitHub Copilot — untouched for 23 days, still billing.
+              {trackedCount === 0
+                ? "Nothing tracked yet. Scan OpenAI/Anthropic or tap a card below."
+                : "Amounts you save update your total and projection instantly."}
             </p>
           </div>
 
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-7">
             <div className="flex items-center justify-between">
-              <Eyebrow>Next renewal</Eyebrow>
-              <span className="rounded-full bg-clay/20 px-2.5 py-1 text-[11px] font-medium text-clay">In 4 days</span>
+              <Eyebrow>Founding plan</Eyebrow>
+              <span className="rounded-full bg-clay/20 px-2.5 py-1 text-[11px] font-medium text-clay">$12/mo</span>
             </div>
             <div className="mt-4 flex items-baseline gap-2">
-              <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-bone">4</span>
-              <span className="text-sm text-bone-muted">days — Jul 17</span>
+              <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-bone">$12</span>
+              <span className="text-sm text-bone-muted">cloud sync</span>
             </div>
-            <p className="mt-6 text-sm leading-relaxed text-bone-muted">ChatGPT Plus · $20.00</p>
+            <p className="mt-6 text-sm leading-relaxed text-bone-muted">
+              Free covers scanning on this device. Upgrade for sync across devices and the locked founding price.
+            </p>
           </div>
         </section>
 
         <section className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-5">
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-8 lg:col-span-3">
             <div className="flex items-center justify-between">
-              <Eyebrow>Connected services</Eyebrow>
+              <Eyebrow>Your AI tools</Eyebrow>
               <button
                 type="button"
-                onClick={() => openManualCorrection("ChatGPT Plus", 20)}
+                onClick={() => openManualCorrection("ChatGPT Plus")}
                 className="inline-flex items-center gap-1 text-sm text-sage-soft transition hover:text-bone"
               >
                 <Plus className="h-3.5 w-3.5" />
@@ -1085,15 +1126,13 @@ export default function Dashboard() {
               </button>
             </div>
             <p className="mt-2 text-[12px] text-bone-muted">
-              Tap any card to set or correct its monthly spend. OpenAI &amp; Anthropic
-              can also be scanned from a screenshot.
+              Tap a card to set its amount. Suggested prices are only prefill — nothing counts until you save.
             </p>
 
             <ul className="mt-5 space-y-3">
               {services.map((service) => {
-                const status = statusConfig[service.status];
-                const displayAmount =
-                  serviceAmounts[service.name] ?? service.amount;
+                const savedAmount = serviceAmounts[service.name];
+                const isSet = savedAmount !== undefined;
                 return (
                   <li key={service.name}>
                     <button
@@ -1101,7 +1140,7 @@ export default function Dashboard() {
                       onClick={() =>
                         openManualCorrection(
                           service.name,
-                          displayAmount,
+                          savedAmount,
                           service.isUsageBased ? null : "Monthly subscription",
                         )
                       }
@@ -1118,22 +1157,29 @@ export default function Dashboard() {
                             {service.name}
                           </span>
                           <span
-                            className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${status.chip}`}
+                            className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
+                              isSet ? "bg-mint/15 text-mint" : "bg-bone/10 text-bone-muted"
+                            }`}
                           >
-                            {status.label}
+                            {isSet ? "Tracked" : "Not set"}
                           </span>
                         </div>
                         <p className="mt-1 text-[13px] text-bone-muted">
-                          {service.type} · {service.renewal}
+                          {service.type}
+                          {isSet
+                            ? service.isUsageBased
+                              ? " · This period"
+                              : " · Monthly"
+                            : ` · Suggested $${service.suggestedAmount.toFixed(0)}`}
                         </p>
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="font-medium tabular-nums text-bone">
-                          ${displayAmount.toFixed(2)}
+                          {isSet ? `$${savedAmount.toFixed(2)}` : "—"}
                         </p>
                         <p className="inline-flex items-center gap-1 text-[11px] text-sage-soft">
                           <PencilLine className="h-3 w-3" />
-                          {service.isUsageBased ? "Edit / scan" : "Set amount"}
+                          {service.isUsageBased ? "Scan or edit" : "Set amount"}
                         </p>
                       </div>
                     </button>
@@ -1141,96 +1187,9 @@ export default function Dashboard() {
                 );
               })}
             </ul>
-
-            <div className="mt-5 flex items-center justify-between rounded-2xl bg-clay/10 px-4 py-3">
-              <p className="text-[13px] text-clay">
-                You could save ${IDLE_WASTE.toFixed(2)}/mo by pausing idle tools
-              </p>
-              <button type="button" onClick={scrollToScanner} className="shrink-0 text-[13px] font-medium text-clay underline-offset-4 transition hover:underline">
-                Scan another bill →
-              </button>
-            </div>
           </div>
 
           <div className="space-y-6 lg:col-span-2">
-            <div id="quick-scan" className="rounded-[28px] border border-hairline bg-surface p-6 md:p-8">
-              <div className="flex items-center justify-between">
-                <Eyebrow>Free Instant Scanner</Eyebrow>
-                <span className="text-[12px] text-mint">
-                  {scanHistory.length} saved{isLoggedIn ? " · synced" : " locally"}
-                </span>
-              </div>
-
-              <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFileChange} />
-
-              <div
-                onDragOver={(e) => { e.preventDefault(); if (!isScanning) setIsDragging(true); }}
-                onDragLeave={() => setIsDragging(false)}
-                onDrop={handleDrop}
-                className={`relative mt-5 flex min-h-[260px] flex-col items-center justify-center overflow-hidden rounded-[24px] border border-dashed px-6 text-center transition duration-180 ${isDragging ? "border-sage-soft bg-sage/15" : "border-hairline bg-background/40"} ${isScanning ? "pointer-events-none" : ""}`}
-              >
-                {isScanning && (
-                  <span aria-hidden className="animate-toray-scan pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-sage-soft to-transparent" />
-                )}
-
-                {isScanning ? (
-                  <ScanLoader stepIndex={scanStep} />
-                ) : (
-                  <>
-                    {previewUrl && scanStatus === "success" ? (
-                      <div className="mb-4 overflow-hidden rounded-2xl border border-hairline">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={previewUrl} alt="Uploaded usage screenshot" className="h-16 w-28 object-cover opacity-80" />
-                      </div>
-                    ) : (
-                      <div className="mb-1 flex h-14 w-14 items-center justify-center rounded-full bg-sage/20">
-                        <ScanLine className={`h-6 w-6 transition-colors ${isDragging ? "text-sage-soft" : "text-sage-soft/70"}`} strokeWidth={1.5} />
-                      </div>
-                    )}
-                    <h3 className="mt-3 font-serif text-xl text-bone">Drop your billing screenshot</h3>
-                    <p className="mt-2 max-w-[280px] text-[13px] leading-relaxed text-bone-muted">
-                      OpenAI or Anthropic usage screens. Analyzed instantly with Vision — never stored by ToRay.
-                    </p>
-                    <button type="button" onClick={() => fileInputRef.current?.click()} className="mt-6 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow">
-                      Choose file
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openManualCorrection()}
-                      className="mt-3 inline-flex items-center gap-1.5 text-[13px] text-sage-soft underline-offset-4 transition hover:text-bone hover:underline"
-                    >
-                      <PencilLine className="h-3.5 w-3.5" />
-                      Enter an amount manually
-                    </button>
-                    <p className="mt-4 text-[11px] tracking-wide text-bone-muted/70">PNG / JPG — Max 10MB · Saved totals stay in this browser</p>
-                  </>
-                )}
-              </div>
-
-              {scanMessage && (
-                <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <p className={`text-[13px] ${scanStatus === "error" ? "text-warning" : scanStatus === "success" ? "text-mint" : "text-bone-muted"}`}>
-                    {scanMessage}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const latestScan = scanHistory[0];
-                      openManualCorrection(
-                        latestScan?.service,
-                        latestScan?.amountUsd,
-                        latestScan?.billingPeriod,
-                      );
-                    }}
-                    className="inline-flex items-center gap-1 text-[13px] text-sage-soft underline-offset-4 transition hover:text-bone hover:underline"
-                  >
-                    <PencilLine className="h-3.5 w-3.5" />
-                    {scanStatus === "success" ? "Correct amount" : "Enter manually"}
-                  </button>
-                </div>
-              )}
-            </div>
-
             <div
               id="founding-member"
               className="rounded-[28px] border border-sage/40 bg-gradient-to-b from-sage/20 to-surface p-6 md:p-8"
@@ -1241,15 +1200,10 @@ export default function Dashboard() {
                   $12/mo
                 </span>
               </div>
-              <div className="mt-4 flex items-baseline gap-2">
-                <span className="font-serif text-4xl tracking-[-0.02em] text-bone">$12</span>
-                <span className="text-sm text-bone-muted">/mo · unlimited smart scanning</span>
-              </div>
-              <p className="mt-3 text-[13px] leading-relaxed text-bone-muted">
-                Screenshot scans for OpenAI &amp; Anthropic, plus fixed costs for
-                ChatGPT, Cursor, Midjourney, and more — all in one dashboard.
+              <p className="mt-3 text-[14px] leading-relaxed text-bone-muted">
+                Free: scan + manual tools on this device. Paid: cloud sync and the locked founding price.
               </p>
-              <ul className="mt-6 space-y-3">
+              <ul className="mt-5 space-y-3">
                 {PRO_FEATURES.map(({ icon: Icon, text }) => (
                   <li key={text} className="flex items-start gap-3">
                     <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sage/30">
@@ -1261,29 +1215,33 @@ export default function Dashboard() {
                 ))}
               </ul>
               <div className="mt-7 space-y-3">
-                <StripeCheckoutLink className="flex w-full items-center justify-center rounded-full bg-sage px-6 py-3 text-sm font-semibold text-bone transition duration-180 hover:bg-sage-glow">
+                <StripeCheckoutLink className="flex w-full items-center justify-center rounded-full bg-sage px-6 py-3 text-sm font-semibold text-bone transition hover:bg-sage-glow">
                   Upgrade — $12/mo
                 </StripeCheckoutLink>
                 <p className="text-center text-[11px] text-bone-muted">
                   Secure checkout via Stripe
                 </p>
-                <div className="relative py-1 text-center text-[11px] uppercase tracking-wider text-bone-muted/70">
-                  <span className="bg-surface px-2 relative z-10">or free magic link</span>
-                  <span className="absolute inset-x-0 top-1/2 h-px bg-hairline" />
-                </div>
-                <WaitlistForm
-                  email={waitlistEmail}
-                  onEmailChange={setWaitlistEmail}
-                  submitted={waitlistSubmitted}
-                  isSubmitting={isWaitlistSubmitting}
-                  onSubmit={handleWaitlistSubmit}
-                  variant="default"
-                  submitLabel="Get free account"
-                  submittingLabel="Sending link…"
-                  successMessage="Check your email for a magic link to your free account."
-                />
-                {waitlistError && (
-                  <p className="mt-2 text-center text-sm text-warning">{waitlistError}</p>
+                {!isLoggedIn && (
+                  <>
+                    <div className="relative py-1 text-center text-[11px] uppercase tracking-wider text-bone-muted/70">
+                      <span className="relative z-10 bg-[var(--surface)] px-2">or free magic-link sign-in</span>
+                      <span className="absolute inset-x-0 top-1/2 h-px bg-hairline" />
+                    </div>
+                    <WaitlistForm
+                      email={waitlistEmail}
+                      onEmailChange={setWaitlistEmail}
+                      submitted={waitlistSubmitted}
+                      isSubmitting={isWaitlistSubmitting}
+                      onSubmit={handleWaitlistSubmit}
+                      variant="default"
+                      submitLabel="Email me a sign-in link"
+                      submittingLabel="Sending link…"
+                      successMessage="Check your email for a magic link to sign in."
+                    />
+                    {waitlistError && (
+                      <p className="mt-2 text-center text-sm text-warning">{waitlistError}</p>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -1292,9 +1250,9 @@ export default function Dashboard() {
       </main>
 
       <footer className="relative z-10 border-t border-hairline">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6 text-[12px] text-bone-muted">
+        <div className="mx-auto flex h-16 max-w-6xl flex-col items-start justify-center gap-1 px-6 text-[12px] text-bone-muted sm:flex-row sm:items-center sm:justify-between">
           <span>© 2026 ToRay</span>
-          <span>All spend data stays in your browser</span>
+          <span>Screenshots aren&apos;t stored. Totals stay local until you sign in.</span>
         </div>
       </footer>
 
