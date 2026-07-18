@@ -2,108 +2,160 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
-  BellRing,
   Check,
+  Download,
+  EyeOff,
   PencilLine,
-  RefreshCw,
+  Plus,
   Radar,
   ScanLine,
+  Shield,
   X,
 } from "lucide-react";
 import {
   applyHistoryToDashboard,
   fetchUserBillingScans,
   insertBillingScan,
+  isValidServiceName,
   mergeBillingScanHistories,
-  SUPPORTED_SERVICES,
+  PRESET_SERVICES,
   type BillingScan,
-  type SupportedService,
+  type ServiceName,
 } from "@/lib/billing-scans";
+import {
+  downloadSpendCsv,
+  mergePrefs,
+  persistPrefsToCloud,
+  readLocalPrefs,
+  writeBudget,
+  writeCustomTools,
+  writeFounding,
+  writeHiddenTools,
+  type CustomToolPref,
+} from "@/lib/dashboard-prefs";
 import { createClient } from "@/lib/supabase/client";
 
 const INITIAL_SPENT = 0;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
 const SCAN_HISTORY_KEY = "toray-billing-scans";
-const BUDGET_KEY = "toray-monthly-budget";
 const STRIPE_URL =
   process.env.NEXT_PUBLIC_STRIPE_PAYMENT_LINK ??
   "https://buy.stripe.com/6oU14m0Lu92V2dL0dx9sk00";
 
 type ScanStatus = "idle" | "scanning" | "success" | "error";
 
-type Service = {
-  name: SupportedService;
+type ToolDef = {
+  name: ServiceName;
   type: string;
   /** Prefill only — never shown as the user's spend until they save. */
   suggestedAmount: number;
   isUsageBased: boolean;
   accent: string;
+  origin: "preset" | "custom";
 };
 
-const services: Service[] = [
-  {
-    name: "OpenAI API",
+const PRESET_META: Record<
+  (typeof PRESET_SERVICES)[number],
+  Omit<ToolDef, "name" | "origin">
+> = {
+  "OpenAI API": {
     type: "Usage-based",
     suggestedAmount: 50,
     isUsageBased: true,
     accent: "bg-clay/20 text-clay",
   },
-  {
-    name: "Anthropic API",
+  "Anthropic API": {
     type: "Usage-based",
     suggestedAmount: 40,
     isUsageBased: true,
     accent: "bg-blush/20 text-blush",
   },
-  {
-    name: "ChatGPT Plus",
+  "ChatGPT Plus": {
     type: "Subscription",
     suggestedAmount: 20,
     isUsageBased: false,
     accent: "bg-mint/20 text-mint",
   },
-  {
-    name: "Claude Pro",
+  "Claude Pro": {
     type: "Subscription",
     suggestedAmount: 20,
     isUsageBased: false,
     accent: "bg-blush/20 text-blush",
   },
-  {
-    name: "Cursor Pro",
+  "Cursor Pro": {
     type: "Subscription",
     suggestedAmount: 20,
     isUsageBased: false,
     accent: "bg-sage/25 text-sage-soft",
   },
-  {
-    name: "Midjourney",
+  "Gemini API": {
+    type: "Usage-based",
+    suggestedAmount: 40,
+    isUsageBased: true,
+    accent: "bg-mint/20 text-mint",
+  },
+  Grok: {
+    type: "Usage-based",
+    suggestedAmount: 30,
+    isUsageBased: true,
+    accent: "bg-bone/10 text-bone-muted",
+  },
+  Midjourney: {
     type: "Subscription",
     suggestedAmount: 30,
     isUsageBased: false,
     accent: "bg-moss/25 text-sage-soft",
   },
-  {
-    name: "GitHub Copilot",
+  Runway: {
+    type: "Subscription",
+    suggestedAmount: 35,
+    isUsageBased: false,
+    accent: "bg-clay/20 text-clay",
+  },
+  ElevenLabs: {
+    type: "Usage-based",
+    suggestedAmount: 22,
+    isUsageBased: true,
+    accent: "bg-blush/20 text-blush",
+  },
+  "GitHub Copilot": {
     type: "Subscription",
     suggestedAmount: 10,
     isUsageBased: false,
     accent: "bg-bone/10 text-bone-muted",
   },
-  {
-    name: "Perplexity Pro",
+  "Perplexity Pro": {
     type: "Subscription",
     suggestedAmount: 20,
     isUsageBased: false,
     accent: "bg-clay/15 text-clay",
   },
+};
+
+const PRESET_TOOLS: ToolDef[] = PRESET_SERVICES.map((name) => ({
+  name,
+  origin: "preset" as const,
+  ...PRESET_META[name],
+}));
+
+const CUSTOM_ACCENTS = [
+  "bg-sage/25 text-sage-soft",
+  "bg-clay/20 text-clay",
+  "bg-mint/20 text-mint",
+  "bg-blush/20 text-blush",
 ];
 
-const SERVICE_DEFAULTS = services.map((service) => ({
-  name: service.name,
-  amount: 0,
-}));
+function toolFromCustom(pref: CustomToolPref, index: number): ToolDef {
+  return {
+    name: pref.name,
+    type: pref.isUsageBased ? "Usage-based" : "Subscription",
+    suggestedAmount: pref.suggestedAmount,
+    isUsageBased: pref.isUsageBased,
+    accent: CUSTOM_ACCENTS[index % CUSTOM_ACCENTS.length],
+    origin: "custom",
+  };
+}
 
 function endOfMonthLabel(date = new Date()) {
   const end = new Date(date.getFullYear(), date.getMonth() + 1, 0);
@@ -119,51 +171,24 @@ function formatClock(date: Date) {
 
 /** Usage-based spend is paced to month-end; fixed subscriptions stay flat. */
 function computeProjectedSpend(
-  amounts: Partial<Record<SupportedService, number>>,
-  catalog: Service[],
+  amounts: Record<string, number>,
+  catalog: ToolDef[],
   date = new Date(),
 ) {
   const day = date.getDate();
   const daysInMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
   const pace = day > 0 ? daysInMonth / day : 1;
+  const byName = new Map(catalog.map((tool) => [tool.name, tool]));
 
   let fixed = 0;
   let usage = 0;
-  for (const service of catalog) {
-    const amount = amounts[service.name];
-    if (amount === undefined) continue;
-    if (service.isUsageBased) usage += amount;
+  for (const [name, amount] of Object.entries(amounts)) {
+    const tool = byName.get(name);
+    if (tool?.isUsageBased ?? true) usage += amount;
     else fixed += amount;
   }
 
   return Math.round((fixed + usage * pace) * 100) / 100;
-}
-
-function readStoredBudget(): number | null {
-  if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(BUDGET_KEY);
-  if (!raw) return null;
-  const value = Number.parseFloat(raw);
-  return Number.isFinite(value) && value > 0 ? value : null;
-}
-
-function StripeCheckoutLink({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <a
-      href={STRIPE_URL}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={className}
-    >
-      {children}
-    </a>
-  );
 }
 
 const SCAN_STEPS = [
@@ -173,9 +198,18 @@ const SCAN_STEPS = [
 ];
 
 const PRO_FEATURES = [
-  { icon: Radar, text: "Cloud sync so your totals follow you across devices" },
-  { icon: BellRing, text: "Founding Member price locked at $12/mo" },
-  { icon: RefreshCw, text: "Priority access to new providers as we add them" },
+  {
+    icon: Radar,
+    text: "Cloud backup of spend, budget, and custom tools across devices",
+  },
+  {
+    icon: Shield,
+    text: "Founding price locked at $12/mo for as long as you stay",
+  },
+  {
+    icon: ScanLine,
+    text: "Funds multi-provider Vision (Gemini, Grok receipts) next",
+  },
 ];
 
 function easeOutCubic(t: number) {
@@ -538,19 +572,33 @@ function ManualCorrectionModal({
   amount,
   period,
   service,
+  serviceOptions,
+  isCustomMode,
+  customName,
+  isUsageBased,
   onAmountChange,
   onPeriodChange,
   onServiceChange,
+  onCustomModeChange,
+  onCustomNameChange,
+  onUsageBasedChange,
   onClose,
   onSave,
   error,
 }: {
   amount: string;
   period: string;
-  service: SupportedService;
+  service: ServiceName;
+  serviceOptions: ServiceName[];
+  isCustomMode: boolean;
+  customName: string;
+  isUsageBased: boolean;
   onAmountChange: (value: string) => void;
   onPeriodChange: (value: string) => void;
-  onServiceChange: (value: SupportedService) => void;
+  onServiceChange: (value: ServiceName) => void;
+  onCustomModeChange: (value: boolean) => void;
+  onCustomNameChange: (value: string) => void;
+  onUsageBasedChange: (value: boolean) => void;
   onClose: () => void;
   onSave: (event: FormEvent<HTMLFormElement>) => void;
   error: string | null;
@@ -568,7 +616,7 @@ function ManualCorrectionModal({
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <Eyebrow>Manual correction</Eyebrow>
+            <Eyebrow>Track a tool</Eyebrow>
             <h2
               id="manual-correction-title"
               className="mt-2 font-serif text-2xl tracking-[-0.02em] text-bone"
@@ -576,8 +624,8 @@ function ManualCorrectionModal({
               Set the amount yourself
             </h2>
             <p className="mt-2 text-sm leading-relaxed text-bone-muted">
-              Set a subscription total or correct a scan. Suggested plan prices
-              are only a starting point.
+              Pick a preset or add any tool — Gemini, Grok, Runway, Notion AI,
+              whatever you actually pay for.
             </p>
           </div>
           <button
@@ -591,26 +639,82 @@ function ManualCorrectionModal({
         </div>
 
         <div className="mt-6 grid gap-4">
-          <label className="grid gap-1.5 text-sm text-bone-muted">
-            Service
-            <select
-              value={service}
-              onChange={(event) =>
-                onServiceChange(event.target.value as SupportedService)
-              }
-              className="rounded-xl border border-hairline bg-background px-3 py-2.5 text-bone outline-none transition focus:border-sage-soft/60 focus:ring-2 focus:ring-sage/20"
-            >
-              {SUPPORTED_SERVICES.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="grid gap-1.5 text-sm text-bone-muted">
+            <span>Service</span>
+            {!isCustomMode ? (
+              <>
+                <select
+                  value={service}
+                  onChange={(event) => onServiceChange(event.target.value)}
+                  className="rounded-xl border border-hairline bg-background px-3 py-2.5 text-bone outline-none transition focus:border-sage-soft/60 focus:ring-2 focus:ring-sage/20"
+                >
+                  {serviceOptions.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => onCustomModeChange(true)}
+                  className="mt-1 justify-self-start text-[13px] text-sage-soft underline-offset-4 hover:underline"
+                >
+                  + Add a custom tool
+                </button>
+              </>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  value={customName}
+                  onChange={(event) => onCustomNameChange(event.target.value)}
+                  placeholder="e.g. Notion AI, v0, Suno"
+                  maxLength={64}
+                  className="rounded-xl border border-hairline bg-background px-3 py-2.5 text-bone outline-none transition placeholder:text-bone-muted/50 focus:border-sage-soft/60 focus:ring-2 focus:ring-sage/20"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => onCustomModeChange(false)}
+                  className="mt-1 justify-self-start text-[13px] text-sage-soft underline-offset-4 hover:underline"
+                >
+                  Back to presets
+                </button>
+              </>
+            )}
+          </div>
+
+          <fieldset className="grid gap-2 text-sm text-bone-muted">
+            <legend>Billing type</legend>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => onUsageBasedChange(false)}
+                className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                  !isUsageBased
+                    ? "bg-sage text-bone"
+                    : "border border-hairline text-bone-muted hover:text-bone"
+                }`}
+              >
+                Subscription
+              </button>
+              <button
+                type="button"
+                onClick={() => onUsageBasedChange(true)}
+                className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                  isUsageBased
+                    ? "bg-sage text-bone"
+                    : "border border-hairline text-bone-muted hover:text-bone"
+                }`}
+              >
+                Usage-based
+              </button>
+            </div>
+          </fieldset>
 
           <label className="grid gap-1.5 text-sm text-bone-muted">
             Current-period total (USD)
-            <div className="flex rounded-xl border border-hairline bg-background transition focus-within:border-sage-soft/60 focus-within:ring-2 focus-within:ring-sage/20">
+            <div className="flex rounded-xl border border-hairline bg-background transition focus-within:border-sage-soft/60 focus-within:ring-2 focus:ring-sage/20">
               <span className="flex items-center pl-3 text-bone-muted">$</span>
               <input
                 type="number"
@@ -671,9 +775,9 @@ export default function Dashboard() {
   const [scanStep, setScanStep] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
-  const [serviceAmounts, setServiceAmounts] = useState<
-    Partial<Record<SupportedService, number>>
-  >({});
+  const [serviceAmounts, setServiceAmounts] = useState<Record<string, number>>(
+    {},
+  );
   const [scanHistory, setScanHistory] = useState<BillingScan[]>([]);
 
   const [waitlistEmail, setWaitlistEmail] = useState("");
@@ -682,35 +786,124 @@ export default function Dashboard() {
   const [waitlistError, setWaitlistError] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isFounding, setIsFounding] = useState(false);
   const [isManualCorrectionOpen, setIsManualCorrectionOpen] = useState(false);
   const [isSignInOpen, setIsSignInOpen] = useState(false);
-  const [manualService, setManualService] =
-    useState<SupportedService>("OpenAI API");
+  const [manualService, setManualService] = useState<ServiceName>("OpenAI API");
   const [manualAmount, setManualAmount] = useState("");
   const [manualPeriod, setManualPeriod] = useState("");
   const [manualError, setManualError] = useState<string | null>(null);
+  const [isCustomMode, setIsCustomMode] = useState(false);
+  const [customName, setCustomName] = useState("");
+  const [manualUsageBased, setManualUsageBased] = useState(true);
   const [budget, setBudget] = useState<number | null>(null);
   const [isEditingBudget, setIsEditingBudget] = useState(false);
   const [budgetDraft, setBudgetDraft] = useState("");
+  const [customTools, setCustomTools] = useState<CustomToolPref[]>([]);
+  const [hiddenTools, setHiddenTools] = useState<string[]>([]);
+
+  const catalog: ToolDef[] = (() => {
+    const base: ToolDef[] = [
+      ...PRESET_TOOLS,
+      ...customTools.map((tool, index) => toolFromCustom(tool, index)),
+    ];
+    const known = new Set(base.map((tool) => tool.name));
+    const extras: ToolDef[] = Object.keys(serviceAmounts)
+      .filter((name) => !known.has(name))
+      .map((name) => ({
+        name,
+        type: "Custom",
+        suggestedAmount: 0,
+        isUsageBased: true,
+        accent: "bg-sage/25 text-sage-soft",
+        origin: "custom" as const,
+      }));
+    return [...base, ...extras];
+  })();
+
+  const visibleTools = catalog.filter(
+    (tool) =>
+      serviceAmounts[tool.name] !== undefined ||
+      !hiddenTools.includes(tool.name),
+  );
 
   const animatedSpent = useAnimatedNumber(spent);
-  const projected = computeProjectedSpend(serviceAmounts, services);
-  const spentRatio =
-    budget && budget > 0 ? Math.min((animatedSpent / budget) * 100, 100) : 0;
-  const remaining = budget != null ? Math.max(budget - animatedSpent, 0) : null;
+  const projected = computeProjectedSpend(serviceAmounts, catalog);
+  const budgetBasis = budget && budget > 0 ? budget : null;
+  const meterRatio = budgetBasis
+    ? Math.min((projected / budgetBasis) * 100, 100)
+    : 0;
+  const remaining =
+    budgetBasis != null ? Math.max(budgetBasis - projected, 0) : null;
   const overspend =
-    budget != null ? Math.round((projected - budget) * 100) / 100 : 0;
-  const isOverBudget = budget != null && projected > budget;
+    budgetBasis != null
+      ? Math.round((projected - budgetBasis) * 100) / 100
+      : 0;
+  const isOverBudget = budgetBasis != null && projected > budgetBasis;
   const isScanning = scanStatus === "scanning";
   const trackedCount = Object.keys(serviceAmounts).length;
   const monthEnd = endOfMonthLabel();
   const hasSpend = spent > 0 || trackedCount > 0;
-  const usageTracked = services
-    .filter((service) => service.isUsageBased && serviceAmounts[service.name] !== undefined)
-    .reduce((sum, service) => sum + (serviceAmounts[service.name] ?? 0), 0);
+  const usageTracked = catalog
+    .filter(
+      (tool) =>
+        tool.isUsageBased && serviceAmounts[tool.name] !== undefined,
+    )
+    .reduce((sum, tool) => sum + (serviceAmounts[tool.name] ?? 0), 0);
   const fixedTracked = Math.round((spent - usageTracked) * 100) / 100;
+  const hiddenUnsetCount = PRESET_TOOLS.filter(
+    (tool) =>
+      hiddenTools.includes(tool.name) &&
+      serviceAmounts[tool.name] === undefined,
+  ).length;
+  const serviceOptions = Array.from(
+    new Set([...catalog.map((tool) => tool.name), ...PRESET_SERVICES]),
+  );
 
-  function applyDashboardState(history: BillingScan[], nextSpent: number, nextAmounts: Partial<Record<SupportedService, number>>) {
+  function currentPrefs() {
+    return {
+      budget,
+      hiddenTools,
+      customTools,
+      isFounding,
+    };
+  }
+
+  function persistPrefs(next: {
+    budget?: number | null;
+    hiddenTools?: string[];
+    customTools?: CustomToolPref[];
+    isFounding?: boolean;
+  }) {
+    const merged = { ...currentPrefs(), ...next };
+    if (next.budget !== undefined) {
+      setBudget(merged.budget);
+      writeBudget(merged.budget);
+    }
+    if (next.hiddenTools !== undefined) {
+      setHiddenTools(merged.hiddenTools);
+      writeHiddenTools(merged.hiddenTools);
+    }
+    if (next.customTools !== undefined) {
+      setCustomTools(merged.customTools);
+      writeCustomTools(merged.customTools);
+    }
+    if (next.isFounding !== undefined) {
+      setIsFounding(merged.isFounding);
+      writeFounding(merged.isFounding);
+    }
+
+    const supabase = supabaseRef.current;
+    if (supabase && isLoggedIn) {
+      void persistPrefsToCloud(supabase, merged).catch(() => {});
+    }
+  }
+
+  function applyDashboardState(
+    history: BillingScan[],
+    nextSpent: number,
+    nextAmounts: Record<string, number>,
+  ) {
     setScanHistory(history);
     setServiceAmounts(nextAmounts);
     setSpent(nextSpent);
@@ -721,7 +914,21 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
-    setBudget(readStoredBudget());
+    const local = readLocalPrefs();
+    setBudget(local.budget);
+    setHiddenTools(local.hiddenTools);
+    setCustomTools(local.customTools);
+    setIsFounding(local.isFounding);
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("upgraded") === "1" || params.get("founding") === "1") {
+      setIsFounding(true);
+      writeFounding(true);
+      params.delete("upgraded");
+      params.delete("founding");
+      const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
+      window.history.replaceState({}, "", next);
+    }
 
     const supabase = createClient();
     supabaseRef.current = supabase;
@@ -738,12 +945,16 @@ export default function Dashboard() {
         }
       }
 
-      // Apply local history immediately so returning users never flash empty.
+      const serviceDefaults = [
+        ...PRESET_TOOLS.map((tool) => ({ name: tool.name, amount: 0 })),
+        ...local.customTools.map((tool) => ({ name: tool.name, amount: 0 })),
+      ];
+
       if (localHistory.length > 0) {
         const localDashboard = applyHistoryToDashboard(
           localHistory,
           INITIAL_SPENT,
-          SERVICE_DEFAULTS,
+          serviceDefaults,
         );
         applyDashboardState(
           localDashboard.scanHistory,
@@ -761,12 +972,36 @@ export default function Dashboard() {
       setUserEmail(user.email);
       setIsLoggedIn(true);
 
+      const remotePrefs = mergePrefs(
+        local,
+        user.user_metadata as {
+          toray_budget?: number | null;
+          toray_hidden_tools?: string[];
+          toray_custom_tools?: CustomToolPref[];
+          toray_founding?: boolean;
+        },
+      );
+      setBudget(remotePrefs.budget);
+      setHiddenTools(remotePrefs.hiddenTools);
+      setCustomTools(remotePrefs.customTools);
+      setIsFounding(remotePrefs.isFounding);
+      writeBudget(remotePrefs.budget);
+      writeHiddenTools(remotePrefs.hiddenTools);
+      writeCustomTools(remotePrefs.customTools);
+      writeFounding(remotePrefs.isFounding);
+
       const remoteHistory = await fetchUserBillingScans(supabase);
       const merged = mergeBillingScanHistories(localHistory, remoteHistory);
       const dashboard = applyHistoryToDashboard(
         merged,
         INITIAL_SPENT,
-        SERVICE_DEFAULTS,
+        [
+          ...PRESET_TOOLS.map((tool) => ({ name: tool.name, amount: 0 })),
+          ...remotePrefs.customTools.map((tool) => ({
+            name: tool.name,
+            amount: 0,
+          })),
+        ],
       );
 
       applyDashboardState(
@@ -811,7 +1046,9 @@ export default function Dashboard() {
       !process.env.NEXT_PUBLIC_SUPABASE_URL ||
       !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
     ) {
-      setWaitlistError("Sign-up is temporarily unavailable. Please try again later.");
+      setWaitlistError(
+        "Sign-up is temporarily unavailable. Please try again later.",
+      );
       return;
     }
 
@@ -859,23 +1096,15 @@ export default function Dashboard() {
     setLastSyncedAt(formatClock(at));
   }
 
-  function saveBudgetValue(value: number | null) {
-    setBudget(value);
-    if (value == null) {
-      window.localStorage.removeItem(BUDGET_KEY);
-    } else {
-      window.localStorage.setItem(BUDGET_KEY, String(value));
-    }
-    setIsEditingBudget(false);
-  }
-
   function commitBudgetDraft() {
     const parsed = Number.parseFloat(budgetDraft);
     if (!Number.isFinite(parsed) || parsed <= 0) {
-      saveBudgetValue(null);
+      persistPrefs({ budget: null });
+      setIsEditingBudget(false);
       return;
     }
-    saveBudgetValue(Math.round(parsed * 100) / 100);
+    persistPrefs({ budget: Math.round(parsed * 100) / 100 });
+    setIsEditingBudget(false);
   }
 
   function saveBillingScan(scan: BillingScan) {
@@ -899,17 +1128,29 @@ export default function Dashboard() {
     }
   }
 
+  function findTool(name: ServiceName): ToolDef | undefined {
+    return catalog.find((tool) => tool.name === name);
+  }
+
   function openManualCorrection(
-    service: SupportedService = "OpenAI API",
+    service: ServiceName = "OpenAI API",
     amount?: number,
     period?: string | null,
+    options?: { custom?: boolean },
   ) {
-    const suggested =
-      services.find((item) => item.name === service)?.suggestedAmount ?? 0;
+    const tool = findTool(service);
+    const suggested = tool?.suggestedAmount ?? 0;
     const currentAmount = amount ?? serviceAmounts[service] ?? suggested;
 
+    setIsCustomMode(Boolean(options?.custom));
+    setCustomName(options?.custom ? "" : service);
     setManualService(service);
-    setManualAmount(currentAmount.toFixed(2));
+    setManualUsageBased(tool?.isUsageBased ?? true);
+    setManualAmount(
+      currentAmount > 0 || amount !== undefined
+        ? currentAmount.toFixed(2)
+        : "",
+    );
     setManualPeriod(period ?? "");
     setManualError(null);
     setIsManualCorrectionOpen(true);
@@ -918,23 +1159,67 @@ export default function Dashboard() {
   function saveManualCorrection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const amount = Number.parseFloat(manualAmount);
+    const resolvedName = (
+      isCustomMode ? customName : manualService
+    ).trim();
+
+    if (!isValidServiceName(resolvedName)) {
+      setManualError("Enter a tool name (1–64 characters).");
+      return;
+    }
 
     if (!Number.isFinite(amount) || amount < 0) {
       setManualError("Enter a valid USD amount of zero or more.");
       return;
     }
 
+    const existingCustom = customTools.some(
+      (tool) => tool.name.toLowerCase() === resolvedName.toLowerCase(),
+    );
+    const isPreset = (PRESET_SERVICES as readonly string[]).includes(
+      resolvedName,
+    );
+
+    if (!isPreset && !existingCustom) {
+      const nextCustom: CustomToolPref[] = [
+        ...customTools,
+        {
+          name: resolvedName,
+          isUsageBased: manualUsageBased,
+          suggestedAmount: amount,
+        },
+      ];
+      persistPrefs({ customTools: nextCustom });
+    } else if (!isPreset && existingCustom) {
+      persistPrefs({
+        customTools: customTools.map((tool) =>
+          tool.name.toLowerCase() === resolvedName.toLowerCase()
+            ? { ...tool, isUsageBased: manualUsageBased }
+            : tool,
+        ),
+      });
+    }
+
+    // Unhide if it was hidden
+    if (hiddenTools.includes(resolvedName)) {
+      persistPrefs({
+        hiddenTools: hiddenTools.filter((name) => name !== resolvedName),
+      });
+    }
+
     saveBillingScan({
       id: crypto.randomUUID(),
-      service: manualService,
+      service: resolvedName,
       amountUsd: Math.round(amount * 100) / 100,
-      billingPeriod: manualPeriod.trim() || null,
+      billingPeriod:
+        manualPeriod.trim() ||
+        (manualUsageBased ? null : "Monthly subscription"),
       confidence: "high",
       scannedAt: new Date().toISOString(),
     });
     setScanStatus("success");
     setScanMessage(
-      `${manualService} · $${amount.toFixed(2)} saved to your dashboard`,
+      `${resolvedName} · $${amount.toFixed(2)} saved to your dashboard`,
     );
     setIsManualCorrectionOpen(false);
   }
@@ -982,13 +1267,13 @@ export default function Dashboard() {
       ) {
         throw new Error(
           result.error ??
-            "This does not look like a clear OpenAI Platform or Anthropic Console billing screen.",
+            "This does not look like a clear OpenAI Platform or Anthropic Console billing screen. Use Add tool to enter any other provider manually.",
         );
       }
 
       setScanStep(2);
       const amountUsd = result.amountUsd;
-      const serviceName: SupportedService =
+      const serviceName: ServiceName =
         result.service === "OpenAI" ? "OpenAI API" : "Anthropic API";
       const scan: BillingScan = {
         id: crypto.randomUUID(),
@@ -1011,8 +1296,7 @@ export default function Dashboard() {
           ? error.message
           : "The billing scanner could not analyze this image.",
       );
-      // Keep the user unblocked when classification is uncertain.
-      openManualCorrection();
+      openManualCorrection("Gemini API", undefined, null, { custom: false });
     }
   }
 
@@ -1029,6 +1313,39 @@ export default function Dashboard() {
     const file = event.dataTransfer.files?.[0];
     if (file) void runBillingScan(file);
   }
+
+  function hideTool(name: string) {
+    if (serviceAmounts[name] !== undefined) return;
+    if (hiddenTools.includes(name)) return;
+    persistPrefs({ hiddenTools: [...hiddenTools, name] });
+  }
+
+  function hideAllUnset() {
+    const next = Array.from(
+      new Set([
+        ...hiddenTools,
+        ...PRESET_TOOLS.filter(
+          (tool) => serviceAmounts[tool.name] === undefined,
+        ).map((tool) => tool.name),
+      ]),
+    );
+    persistPrefs({ hiddenTools: next });
+  }
+
+  function showHiddenTools() {
+    persistPrefs({ hiddenTools: [] });
+  }
+
+  function exportCsv() {
+    downloadSpendCsv({
+      amounts: serviceAmounts,
+      history: scanHistory,
+      budget,
+      projected,
+    });
+  }
+
+  const stripeHref = `${STRIPE_URL}${STRIPE_URL.includes("?") ? "&" : "?"}client_reference_id=toray_founding`;
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-background font-sans text-bone selection:bg-sage/40">
@@ -1076,9 +1393,16 @@ export default function Dashboard() {
                 Sign in
               </button>
             )}
-            <StripeCheckoutLink className="rounded-full border border-hairline px-3 py-2 text-sm text-bone-muted transition hover:border-sage-soft/40 hover:text-bone">
-              Upgrade
-            </StripeCheckoutLink>
+            {!isFounding && (
+              <a
+                href={stripeHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-full border border-hairline px-3 py-2 text-sm text-bone-muted transition hover:border-sage-soft/40 hover:text-bone"
+              >
+                Upgrade
+              </a>
+            )}
           </div>
         </div>
       </header>
@@ -1091,9 +1415,9 @@ export default function Dashboard() {
               Know your AI burn before your card does.
             </h1>
             <p className="mt-4 max-w-md text-[15px] leading-relaxed text-bone-muted">
-              Drop an OpenAI or Anthropic billing screenshot to read this
-              month&apos;s total. Add ChatGPT, Cursor, Midjourney, and more by
-              hand. Free to use — sign in to sync across devices.
+              Scan OpenAI or Anthropic screenshots, then track Gemini, Grok,
+              Runway, Cursor, or any custom tool by hand. Free on this device —
+              sign in when you want a backup.
             </p>
             <p className="mt-3 text-[13px] text-bone-muted">
               Screenshots are analyzed securely and not stored by ToRay. Totals
@@ -1148,18 +1472,18 @@ export default function Dashboard() {
                   )}
                   <h2 className="mt-2 font-serif text-xl text-bone">Drop a billing screenshot</h2>
                   <p className="mt-2 max-w-[280px] text-[13px] leading-relaxed text-bone-muted">
-                    OpenAI Platform or Anthropic Console. Instant Vision read — image not kept.
+                    OpenAI Platform or Anthropic Console for instant Vision. Any other provider — add it as a tool below.
                   </p>
                   <button type="button" onClick={() => fileInputRef.current?.click()} className="mt-5 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition hover:bg-sage-glow">
                     Choose file
                   </button>
                   <button
                     type="button"
-                    onClick={() => openManualCorrection()}
+                    onClick={() => openManualCorrection("Gemini API")}
                     className="mt-3 inline-flex items-center gap-1.5 text-[13px] text-sage-soft underline-offset-4 transition hover:text-bone hover:underline"
                   >
-                    <PencilLine className="h-3.5 w-3.5" />
-                    Enter an amount manually
+                    <Plus className="h-3.5 w-3.5" />
+                    Add any tool manually
                   </button>
                 </>
               )}
@@ -1175,7 +1499,7 @@ export default function Dashboard() {
                   onClick={() => {
                     const latestScan = scanHistory[0];
                     openManualCorrection(
-                      latestScan?.service,
+                      latestScan?.service ?? "OpenAI API",
                       latestScan?.amountUsd,
                       latestScan?.billingPeriod,
                     );
@@ -1215,36 +1539,47 @@ export default function Dashboard() {
 
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-7">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <Eyebrow>This month</Eyebrow>
-              <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${!hasSpend ? "bg-bone/10 text-bone-muted" : isOverBudget ? "bg-danger/20 text-danger" : "bg-sage/25 text-mint"}`}>
-                {!hasSpend ? "Empty" : isOverBudget ? "Over budget" : budget != null ? "On track" : "Tracked"}
-              </span>
+              <div className="flex items-center gap-2">
+                {budget != null && !isEditingBudget && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBudgetDraft(String(Math.round(budget)));
+                      setIsEditingBudget(true);
+                    }}
+                    className="rounded-full border border-hairline px-2.5 py-1 text-[11px] font-medium text-sage-soft transition hover:text-bone"
+                  >
+                    Edit budget
+                  </button>
+                )}
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${!hasSpend ? "bg-bone/10 text-bone-muted" : isOverBudget ? "bg-danger/20 text-danger" : "bg-sage/25 text-mint"}`}>
+                  {!hasSpend ? "Empty" : isOverBudget ? "Over budget" : budget != null ? "On track" : "Tracked"}
+                </span>
+              </div>
             </div>
             <div className="mt-4 flex flex-wrap items-baseline gap-2">
               <span className={`font-serif text-4xl tracking-[-0.02em] tabular-nums transition-colors duration-500 ${scanStatus === "success" ? "text-mint" : "text-bone"}`}>
                 ${animatedSpent.toFixed(2)}
               </span>
               {budget != null && !isEditingBudget ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setBudgetDraft(budget.toFixed(0));
-                    setIsEditingBudget(true);
-                  }}
-                  className="text-sm tabular-nums text-bone-muted underline-offset-2 transition hover:text-bone hover:underline"
-                >
-                  / ${budget.toFixed(0)} budget
-                </button>
+                <span className="text-sm tabular-nums text-bone-muted">
+                  spent · ${budget.toFixed(0)} budget
+                </span>
               ) : null}
             </div>
             <div className="mt-6">
               {budget != null && !isEditingBudget ? (
                 <>
-                  <Meter ratio={spentRatio} />
+                  <Meter ratio={meterRatio} />
                   <div className="mt-2.5 flex justify-between text-xs text-bone-muted">
-                    <span>{spentRatio.toFixed(0)}% of budget</span>
-                    <span>${remaining?.toFixed(2)} left</span>
+                    <span>{meterRatio.toFixed(0)}% of budget (outlook)</span>
+                    <span>
+                      {remaining != null
+                        ? `$${remaining.toFixed(0)} headroom`
+                        : null}
+                    </span>
                   </div>
                 </>
               ) : isEditingBudget ? (
@@ -1266,6 +1601,7 @@ export default function Dashboard() {
                       className="w-20 bg-transparent text-bone outline-none"
                       aria-label="Monthly budget"
                       autoFocus
+                      placeholder="e.g. 150"
                     />
                   </label>
                   <button type="submit" className="rounded-full bg-sage px-3 py-1.5 text-xs font-medium text-bone">
@@ -1281,7 +1617,10 @@ export default function Dashboard() {
                   {budget != null && (
                     <button
                       type="button"
-                      onClick={() => saveBudgetValue(null)}
+                      onClick={() => {
+                        persistPrefs({ budget: null });
+                        setIsEditingBudget(false);
+                      }}
                       className="text-xs text-bone-muted hover:text-bone"
                     >
                       Clear
@@ -1292,7 +1631,7 @@ export default function Dashboard() {
                 <button
                   type="button"
                   onClick={() => {
-                    setBudgetDraft("200");
+                    setBudgetDraft("");
                     setIsEditingBudget(true);
                   }}
                   className="text-sm text-sage-soft underline-offset-4 transition hover:text-bone hover:underline"
@@ -1302,9 +1641,9 @@ export default function Dashboard() {
               )}
               <p className={`mt-3 text-[13px] ${isOverBudget ? "text-danger" : "text-bone-muted"}`}>
                 {!hasSpend
-                  ? "Scan or set a tool to see month-end outlook."
+                  ? "Scan or add a tool to see month-end outlook."
                   : isOverBudget
-                    ? `Outlook $${projected.toFixed(0)} by ${monthEnd} — $${overspend.toFixed(0)} over budget`
+                    ? `Outlook $${projected.toFixed(0)} by ${monthEnd} — $${overspend.toFixed(0)} over. Edit budget or hide tools you don’t use.`
                     : `Outlook $${projected.toFixed(0)} by ${monthEnd}`}
               </p>
             </div>
@@ -1319,12 +1658,12 @@ export default function Dashboard() {
             </div>
             <div className="mt-4 flex items-baseline gap-2">
               <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-bone">{trackedCount}</span>
-              <span className="text-sm text-bone-muted">/ {services.length}</span>
+              <span className="text-sm text-bone-muted">visible {visibleTools.length}</span>
             </div>
             <p className="mt-6 text-sm leading-relaxed text-bone-muted">
               {trackedCount === 0
-                ? "Nothing tracked yet. Scan OpenAI/Anthropic or tap a card below."
-                : "Amounts you save update your total and outlook instantly."}
+                ? "Add Gemini, Grok, or any tool — your list, not ours."
+                : "Hide presets you don’t use so this stays your dashboard."}
             </p>
           </div>
 
@@ -1348,35 +1687,66 @@ export default function Dashboard() {
           </div>
         </section>
 
+        {trackedCount >= 2 && !isLoggedIn && (
+          <div className="mt-6 rounded-[24px] border border-sage/30 bg-sage/10 px-5 py-4 md:px-6">
+            <p className="font-serif text-lg text-bone">
+              Nice — ${spent.toFixed(0)} across {trackedCount} tools on this device.
+            </p>
+            <p className="mt-1 text-sm text-bone-muted">
+              Free magic-link sign-in backs up spend, budget, and custom tools so a browser clear doesn’t wipe them.
+            </p>
+            <button
+              type="button"
+              onClick={openSignIn}
+              className="mt-3 rounded-full bg-sage px-4 py-2 text-sm font-medium text-bone transition hover:bg-sage-glow"
+            >
+              Back up free
+            </button>
+          </div>
+        )}
+
         <section className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-5">
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-8 lg:col-span-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <Eyebrow>Your AI tools</Eyebrow>
-              <button
-                type="button"
-                onClick={() => {
-                  const firstUnset =
-                    services.find(
-                      (service) => serviceAmounts[service.name] === undefined,
-                    )?.name ?? "OpenAI API";
-                  openManualCorrection(firstUnset);
-                }}
-                className="inline-flex items-center gap-1 text-sm text-sage-soft transition hover:text-bone"
-              >
-                <PencilLine className="h-3.5 w-3.5" />
-                Set amount
-              </button>
+              <div className="flex flex-wrap items-center gap-3">
+                {hiddenUnsetCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={showHiddenTools}
+                    className="text-sm text-bone-muted transition hover:text-bone"
+                  >
+                    Show hidden ({hiddenUnsetCount})
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={hideAllUnset}
+                  className="inline-flex items-center gap-1 text-sm text-bone-muted transition hover:text-bone"
+                >
+                  <EyeOff className="h-3.5 w-3.5" />
+                  Hide unset
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openManualCorrection("Gemini API", undefined, null, { custom: false })}
+                  className="inline-flex items-center gap-1 text-sm text-sage-soft transition hover:text-bone"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add tool
+                </button>
+              </div>
             </div>
             <p className="mt-2 text-[12px] text-bone-muted">
-              Tap a card to set its amount. Suggested prices are only prefill — nothing counts until you save.
+              Tap a card to edit. Suggested prices are prefill only. Add a custom name anytime.
             </p>
 
             <ul className="mt-5 space-y-3">
-              {services.map((service) => {
+              {visibleTools.map((service) => {
                 const savedAmount = serviceAmounts[service.name];
                 const isSet = savedAmount !== undefined;
                 return (
-                  <li key={service.name}>
+                  <li key={service.name} className="relative">
                     <button
                       type="button"
                       onClick={() =>
@@ -1405,6 +1775,11 @@ export default function Dashboard() {
                           >
                             {isSet ? "Tracked" : "Not set"}
                           </span>
+                          {service.origin === "custom" && (
+                            <span className="rounded-full bg-clay/15 px-2.5 py-0.5 text-[11px] font-medium text-clay">
+                              Custom
+                            </span>
+                          )}
                         </div>
                         <p className="mt-1 text-[13px] text-bone-muted">
                           {service.type}
@@ -1412,7 +1787,9 @@ export default function Dashboard() {
                             ? service.isUsageBased
                               ? " · This period"
                               : " · Monthly"
-                            : ` · Suggested $${service.suggestedAmount.toFixed(0)}`}
+                            : service.suggestedAmount > 0
+                              ? ` · Suggested $${service.suggestedAmount.toFixed(0)}`
+                              : ""}
                         </p>
                       </div>
                       <div className="shrink-0 text-right">
@@ -1421,10 +1798,24 @@ export default function Dashboard() {
                         </p>
                         <p className="inline-flex items-center gap-1 text-[11px] text-sage-soft">
                           <PencilLine className="h-3 w-3" />
-                          {service.isUsageBased ? "Scan or edit" : "Set amount"}
+                          {service.isUsageBased &&
+                          (service.name === "OpenAI API" ||
+                            service.name === "Anthropic API")
+                            ? "Scan or edit"
+                            : "Set amount"}
                         </p>
                       </div>
                     </button>
+                    {!isSet && (
+                      <button
+                        type="button"
+                        onClick={() => hideTool(service.name)}
+                        className="absolute right-3 top-3 rounded-full p-1.5 text-bone-muted/70 transition hover:bg-bone/10 hover:text-bone"
+                        aria-label={`Hide ${service.name}`}
+                      >
+                        <EyeOff className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </li>
                 );
               })}
@@ -1432,19 +1823,38 @@ export default function Dashboard() {
           </div>
 
           <div className="space-y-6 lg:col-span-2">
+            <div className="rounded-[28px] border border-hairline bg-surface p-6">
+              <Eyebrow>Your data</Eyebrow>
+              <p className="mt-3 text-sm leading-relaxed text-bone-muted">
+                Export a CSV of tools, outlook, and update history anytime — free.
+              </p>
+              <button
+                type="button"
+                onClick={exportCsv}
+                disabled={!hasSpend}
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full border border-hairline px-4 py-2.5 text-sm font-medium text-bone transition hover:border-sage-soft/40 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Download className="h-4 w-4" />
+                Export CSV
+              </button>
+            </div>
+
             <div
               id="founding-member"
               className="rounded-[28px] border border-sage/40 bg-gradient-to-b from-sage/20 to-surface p-6 md:p-8"
             >
               <div className="flex items-center justify-between">
-                <Eyebrow>Founding Member</Eyebrow>
+                <Eyebrow>
+                  {isFounding ? "Founding Member" : "When you’re ready"}
+                </Eyebrow>
                 <span className="rounded-full bg-mint/15 px-2.5 py-1 text-[11px] font-medium text-mint">
-                  $12/mo
+                  {isFounding ? "Active" : "$12/mo"}
                 </span>
               </div>
               <p className="mt-3 text-[14px] leading-relaxed text-bone-muted">
-                Scanning and manual tracking stay free on this device. Upgrade
-                only if you want cloud sync and the locked founding price.
+                {isFounding
+                  ? "Thank you — your founding price stays locked. Keep tracking freely; sync and export are yours."
+                  : "Everything above stays free. Founding Member is for people who already rely on ToRay and want cloud backup plus a locked $12 price that funds the next Vision providers."}
               </p>
               <ul className="mt-5 space-y-3">
                 {PRO_FEATURES.map(({ icon: Icon, text }) => (
@@ -1458,11 +1868,20 @@ export default function Dashboard() {
                 ))}
               </ul>
               <div className="mt-7 space-y-3">
-                <StripeCheckoutLink className="flex w-full items-center justify-center rounded-full bg-sage px-6 py-3 text-sm font-semibold text-bone transition hover:bg-sage-glow">
-                  Upgrade — $12/mo
-                </StripeCheckoutLink>
+                {!isFounding && (
+                  <a
+                    href={stripeHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex w-full items-center justify-center rounded-full bg-sage px-6 py-3 text-sm font-semibold text-bone transition hover:bg-sage-glow"
+                  >
+                    Become a Founding Member — $12/mo
+                  </a>
+                )}
                 <p className="text-center text-[11px] text-bone-muted">
-                  Secure checkout via Stripe
+                  {isFounding
+                    ? "You’re supporting multi-provider Vision next."
+                    : "Secure checkout via Stripe · cancel anytime"}
                 </p>
                 {!isLoggedIn && (
                   <button
@@ -1470,7 +1889,16 @@ export default function Dashboard() {
                     onClick={openSignIn}
                     className="flex w-full items-center justify-center rounded-full border border-hairline px-6 py-3 text-sm font-medium text-bone-muted transition hover:border-sage-soft/40 hover:text-bone"
                   >
-                    Sign in free for sync
+                    Sign in free to back up first
+                  </button>
+                )}
+                {!isFounding && (
+                  <button
+                    type="button"
+                    onClick={() => persistPrefs({ isFounding: true })}
+                    className="w-full text-center text-[11px] text-bone-muted underline-offset-2 hover:text-bone hover:underline"
+                  >
+                    Already checked out? Mark Founding Member here
                   </button>
                 )}
               </div>
@@ -1491,9 +1919,25 @@ export default function Dashboard() {
           amount={manualAmount}
           period={manualPeriod}
           service={manualService}
+          serviceOptions={serviceOptions}
+          isCustomMode={isCustomMode}
+          customName={customName}
+          isUsageBased={manualUsageBased}
           onAmountChange={setManualAmount}
           onPeriodChange={setManualPeriod}
-          onServiceChange={setManualService}
+          onServiceChange={(name) => {
+            setManualService(name);
+            const tool = findTool(name);
+            setManualUsageBased(tool?.isUsageBased ?? true);
+            if (serviceAmounts[name] !== undefined) {
+              setManualAmount(serviceAmounts[name].toFixed(2));
+            } else if (tool) {
+              setManualAmount(tool.suggestedAmount.toFixed(2));
+            }
+          }}
+          onCustomModeChange={setIsCustomMode}
+          onCustomNameChange={setCustomName}
+          onUsageBasedChange={setManualUsageBased}
           onClose={() => setIsManualCorrectionOpen(false)}
           onSave={saveManualCorrection}
           error={manualError}
