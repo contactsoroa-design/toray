@@ -26,7 +26,8 @@ export function wouldExceedFreeToolLimit(
 }
 
 /** Budget UI is available on Free (capped) and Pro (unlimited). */
-export function canUseBudget(_isFounding: boolean): boolean {
+export function canUseBudget(isFounding: boolean): boolean {
+  void isFounding;
   return true;
 }
 

@@ -1068,7 +1068,9 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
+    // Intentional client-only hydrate from localStorage (no SSR equivalent).
     const local = readLocalPrefs();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount hydrate from device prefs
     setBudget(clampBudgetForPlan(local.isFounding, local.budget));
     setHiddenTools(local.hiddenTools);
     setCustomTools(local.customTools);

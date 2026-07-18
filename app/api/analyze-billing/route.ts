@@ -36,7 +36,6 @@ function isBillingAnalysis(value: unknown): value is BillingAnalysis {
 
   const analysis = value as Record<string, unknown>;
   const validServices = new Set<unknown>([...ALL_VISION_PROVIDERS, null]);
-  const validConfidence = new Set(["high", "medium", "low"]);
   const service = validServices.has(analysis.service)
     ? (analysis.service as BillingAnalysis["service"])
     : undefined;
