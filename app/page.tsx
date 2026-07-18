@@ -1099,10 +1099,15 @@ export default function Dashboard() {
       params.get("stripe_session_id") || params.get("session_id");
     const justSignedIn = params.get("signed_in") === "1";
     const authError = params.get("auth_error") === "1";
+    const authReason = params.get("auth_reason");
 
     if (authError) {
+      const reasonHint =
+        authReason === "missing_code"
+          ? " The link had no login code — open the newest email on the same browser you used to request it."
+          : " Links expire after a short time and can only be used once.";
       setAuthNotice(
-        "That sign-in link expired or failed. Request a new magic link.",
+        `That sign-in link expired or failed.${reasonHint} Request a new magic link from Sign in.`,
       );
     }
 
@@ -1116,6 +1121,7 @@ export default function Dashboard() {
       params.delete("founding");
       params.delete("signed_in");
       params.delete("auth_error");
+      params.delete("auth_reason");
       const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
       window.history.replaceState({}, "", next);
     }
@@ -1382,7 +1388,9 @@ export default function Dashboard() {
     try {
       const supabase = supabaseRef.current ?? createClient();
       supabaseRef.current = supabase;
-      const redirectTo = `${process.env.NEXT_PUBLIC_SITE_URL || window.location.origin}/auth/callback`;
+      // Always use the current host so production links don't point at localhost
+      // when NEXT_PUBLIC_SITE_URL is wrong in the build env.
+      const redirectTo = `${window.location.origin}/auth/callback`;
 
       const { error } = await supabase.auth.signInWithOtp({
         email: trimmed,
