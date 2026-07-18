@@ -82,6 +82,8 @@ function buildStripeHref(email: string | null) {
 }
 
 type ScanStatus = "idle" | "scanning" | "success" | "error";
+/** track = set amount on existing tool; add/edit = manage custom catalog entries */
+type ManualModalMode = "track" | "add_custom" | "edit_custom";
 
 type ToolDef = {
   name: ServiceName;
@@ -677,20 +679,21 @@ function ScanLoader({ stepIndex }: { stepIndex: number }) {
 }
 
 function ManualCorrectionModal({
+  mode,
   amount,
   period,
   service,
   serviceOptions,
-  isCustomMode,
   customName,
   isUsageBased,
   canUseCustomTools,
   onAmountChange,
   onPeriodChange,
   onServiceChange,
-  onCustomModeChange,
   onCustomNameChange,
   onUsageBasedChange,
+  onSwitchToAddCustom,
+  onSwitchToTrack,
   onClose,
   onSave,
   onClear,
@@ -700,20 +703,21 @@ function ManualCorrectionModal({
   onRequestCustomUpgrade,
   error,
 }: {
+  mode: ManualModalMode;
   amount: string;
   period: string;
   service: ServiceName;
   serviceOptions: ServiceName[];
-  isCustomMode: boolean;
   customName: string;
   isUsageBased: boolean;
   canUseCustomTools: boolean;
   onAmountChange: (value: string) => void;
   onPeriodChange: (value: string) => void;
   onServiceChange: (value: ServiceName) => void;
-  onCustomModeChange: (value: boolean) => void;
   onCustomNameChange: (value: string) => void;
   onUsageBasedChange: (value: boolean) => void;
+  onSwitchToAddCustom?: () => void;
+  onSwitchToTrack?: () => void;
   onClose: () => void;
   onSave: (event: FormEvent<HTMLFormElement>) => void;
   onClear?: () => void;
@@ -723,6 +727,28 @@ function ManualCorrectionModal({
   onRequestCustomUpgrade?: () => void;
   error: string | null;
 }) {
+  const isCustomForm = mode === "add_custom" || mode === "edit_custom";
+  const title =
+    mode === "add_custom"
+      ? "Add a custom tool"
+      : mode === "edit_custom"
+        ? "Edit custom tool"
+        : "Set the amount yourself";
+  const subtitle =
+    mode === "add_custom"
+      ? "Creates a new tool in your list. Preset names can’t be reused — pick a unique name."
+      : mode === "edit_custom"
+        ? "Rename, change billing type, update the amount, or delete this custom tool."
+        : canUseCustomTools
+          ? "Pick a tool already on your list and set this period’s total. To create a new name, use Add custom tool."
+          : "Pick from the free presets. Custom tool names unlock with ToRay Pro.";
+  const submitLabel =
+    mode === "add_custom"
+      ? "Add tool"
+      : mode === "edit_custom"
+        ? "Save changes"
+        : "Save amount";
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 px-5 py-8 backdrop-blur-sm"
@@ -737,17 +763,21 @@ function ManualCorrectionModal({
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <Eyebrow>Track a tool</Eyebrow>
+            <Eyebrow>
+              {mode === "add_custom"
+                ? "Add"
+                : mode === "edit_custom"
+                  ? "Edit"
+                  : "Track"}
+            </Eyebrow>
             <h2
               id="manual-correction-title"
               className="mt-2 font-serif text-2xl tracking-[-0.02em] text-bone"
             >
-              Set the amount yourself
+              {title}
             </h2>
             <p className="mt-2 text-sm leading-relaxed text-bone-muted">
-              {canUseCustomTools
-                ? "Pick a preset or add any tool — Gemini, Grok, Runway, Notion AI, whatever you actually pay for."
-                : "Pick from the free presets. Custom tool names unlock with ToRay Pro."}
+              {subtitle}
             </p>
           </div>
           <button
@@ -762,8 +792,29 @@ function ManualCorrectionModal({
 
         <div className="mt-6 grid gap-4">
           <div className="grid gap-1.5 text-sm text-bone-muted">
-            <span>Service</span>
-            {!isCustomMode || !canUseCustomTools ? (
+            <span>{isCustomForm ? "Tool name" : "Service"}</span>
+            {isCustomForm ? (
+              <>
+                <input
+                  type="text"
+                  value={customName}
+                  onChange={(event) => onCustomNameChange(event.target.value)}
+                  placeholder="e.g. Notion AI, v0, Suno"
+                  maxLength={64}
+                  className="rounded-xl border border-hairline bg-background px-3 py-2.5 text-bone outline-none transition placeholder:text-bone-muted/50 focus:border-sage-soft/60 focus:ring-2 focus:ring-sage/20"
+                  autoFocus
+                />
+                {mode === "add_custom" && onSwitchToTrack && (
+                  <button
+                    type="button"
+                    onClick={onSwitchToTrack}
+                    className="mt-1 justify-self-start text-[13px] text-sage-soft underline-offset-4 hover:underline"
+                  >
+                    Track an existing tool instead
+                  </button>
+                )}
+              </>
+            ) : (
               <>
                 <select
                   value={service}
@@ -779,10 +830,10 @@ function ManualCorrectionModal({
                 {canUseCustomTools ? (
                   <button
                     type="button"
-                    onClick={() => onCustomModeChange(true)}
+                    onClick={onSwitchToAddCustom}
                     className="mt-1 justify-self-start text-[13px] text-sage-soft underline-offset-4 hover:underline"
                   >
-                    + Add a custom tool
+                    + Add a new custom tool
                   </button>
                 ) : (
                   <button
@@ -794,58 +845,47 @@ function ManualCorrectionModal({
                   </button>
                 )}
               </>
-            ) : (
-              <>
-                <input
-                  type="text"
-                  value={customName}
-                  onChange={(event) => onCustomNameChange(event.target.value)}
-                  placeholder="e.g. Notion AI, v0, Suno"
-                  maxLength={64}
-                  className="rounded-xl border border-hairline bg-background px-3 py-2.5 text-bone outline-none transition placeholder:text-bone-muted/50 focus:border-sage-soft/60 focus:ring-2 focus:ring-sage/20"
-                  autoFocus
-                />
-                <button
-                  type="button"
-                  onClick={() => onCustomModeChange(false)}
-                  className="mt-1 justify-self-start text-[13px] text-sage-soft underline-offset-4 hover:underline"
-                >
-                  Back to presets
-                </button>
-              </>
             )}
           </div>
 
-          <fieldset className="grid gap-2 text-sm text-bone-muted">
-            <legend>Billing type</legend>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => onUsageBasedChange(false)}
-                className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                  !isUsageBased
-                    ? "bg-sage text-bone"
-                    : "border border-hairline text-bone-muted hover:text-bone"
-                }`}
-              >
-                Subscription
-              </button>
-              <button
-                type="button"
-                onClick={() => onUsageBasedChange(true)}
-                className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                  isUsageBased
-                    ? "bg-sage text-bone"
-                    : "border border-hairline text-bone-muted hover:text-bone"
-                }`}
-              >
-                Usage-based
-              </button>
-            </div>
-          </fieldset>
+          {isCustomForm && (
+            <fieldset className="grid gap-2 text-sm text-bone-muted">
+              <legend>Billing type</legend>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => onUsageBasedChange(false)}
+                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                    !isUsageBased
+                      ? "bg-sage text-bone"
+                      : "border border-hairline text-bone-muted hover:text-bone"
+                  }`}
+                >
+                  Subscription
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onUsageBasedChange(true)}
+                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                    isUsageBased
+                      ? "bg-sage text-bone"
+                      : "border border-hairline text-bone-muted hover:text-bone"
+                  }`}
+                >
+                  Usage-based
+                </button>
+              </div>
+            </fieldset>
+          )}
 
           <label className="grid gap-1.5 text-sm text-bone-muted">
             Current-period total (USD)
+            {mode === "add_custom" && (
+              <span className="font-normal text-bone-muted/60">
+                {" "}
+                — optional; leave blank to add without tracking spend yet
+              </span>
+            )}
             <div className="flex rounded-xl border border-hairline bg-background transition focus-within:border-sage-soft/60 focus-within:ring-2 focus:ring-sage/20">
               <span className="flex items-center pl-3 text-bone-muted">$</span>
               <input
@@ -886,7 +926,7 @@ function ManualCorrectionModal({
               className="inline-flex items-center justify-center gap-2 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition hover:bg-sage-glow"
             >
               <Check className="h-4 w-4" />
-              Save amount
+              {submitLabel}
             </button>
           </div>
           {(canClear && onClear) || (canDeleteCustom && onDeleteCustom) ? (
@@ -956,8 +996,13 @@ export default function Dashboard() {
   const [manualAmount, setManualAmount] = useState("");
   const [manualPeriod, setManualPeriod] = useState("");
   const [manualError, setManualError] = useState<string | null>(null);
-  const [isCustomMode, setIsCustomMode] = useState(false);
+  const [manualModalMode, setManualModalMode] =
+    useState<ManualModalMode>("track");
   const [customName, setCustomName] = useState("");
+  /** Original name when editing a custom tool (for rename). */
+  const [editingCustomOriginal, setEditingCustomOriginal] = useState<
+    string | null
+  >(null);
   const [manualUsageBased, setManualUsageBased] = useState(true);
   const [budget, setBudget] = useState<number | null>(null);
   const [isEditingBudget, setIsEditingBudget] = useState(false);
@@ -1638,22 +1683,26 @@ export default function Dashboard() {
     }
   }
 
+  function isPresetName(name: string): boolean {
+    const lower = name.trim().toLowerCase();
+    return (PRESET_SERVICES as readonly string[]).some(
+      (preset) => preset.toLowerCase() === lower,
+    );
+  }
+
+  function findCustomTool(name: string): CustomToolPref | undefined {
+    const lower = name.trim().toLowerCase();
+    return customTools.find((tool) => tool.name.toLowerCase() === lower);
+  }
+
   function deleteCustomTool(name: ServiceName) {
     if (!canManageCustomTools(isFounding)) {
-      promptFoundingUpgrade(
-        foundingUpgradeHint("Custom tools"),
-      );
+      promptFoundingUpgrade(foundingUpgradeHint("Custom tools"));
       return;
     }
-    const isCustom = customTools.some(
-      (tool) => tool.name.toLowerCase() === name.toLowerCase(),
-    );
-    if (!isCustom) return;
+    if (!findCustomTool(name)) return;
 
-    if (serviceAmounts[name] !== undefined) {
-      clearTrackedTool(name);
-    }
-
+    const existingAmount = serviceAmounts[name];
     persistPrefs({
       customTools: customTools.filter(
         (tool) => tool.name.toLowerCase() !== name.toLowerCase(),
@@ -1662,6 +1711,32 @@ export default function Dashboard() {
         (item) => item.toLowerCase() !== name.toLowerCase(),
       ),
     });
+
+    if (existingAmount !== undefined) {
+      setServiceAmounts((current) => {
+        const next = { ...current };
+        delete next[name];
+        return next;
+      });
+      setSpent((current) => Math.max(0, current - existingAmount));
+      setScanHistory((current) => {
+        const next = current.filter((scan) => scan.service !== name);
+        window.localStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(next));
+        return next;
+      });
+      markUpdated();
+      const supabase = supabaseRef.current;
+      if (supabase && isLoggedIn) {
+        setCloudSyncStatus("syncing");
+        void deleteBillingScansForService(supabase, name)
+          .then(() => {
+            setCloudSyncStatus("synced");
+            window.setTimeout(() => setCloudSyncStatus("idle"), 2500);
+          })
+          .catch(() => setCloudSyncStatus("error"));
+      }
+    }
+
     setScanStatus("success");
     setScanMessage(`${name} deleted from your tools`);
     setIsManualCorrectionOpen(false);
@@ -1675,32 +1750,49 @@ export default function Dashboard() {
     service: ServiceName = "OpenAI API",
     amount?: number,
     period?: string | null,
-    options?: { custom?: boolean },
+    options?: { mode?: ManualModalMode },
   ) {
-    const wantsCustom = Boolean(options?.custom);
-    if (wantsCustom && !canManageCustomTools(isFounding)) {
+    const requestedMode = options?.mode ?? "track";
+
+    if (
+      (requestedMode === "add_custom" || requestedMode === "edit_custom") &&
+      !canManageCustomTools(isFounding)
+    ) {
       promptFoundingUpgrade(foundingUpgradeHint("Custom tools"));
       return;
     }
-    const custom = wantsCustom;
-    const resolvedService = custom
-      ? service || "OpenAI API"
-      : service || "OpenAI API";
+
+    if (requestedMode === "add_custom") {
+      setManualModalMode("add_custom");
+      setEditingCustomOriginal(null);
+      setCustomName("");
+      setManualService("OpenAI API");
+      setManualUsageBased(true);
+      setManualAmount("");
+      setManualPeriod("");
+      setManualError(null);
+      setIsManualCorrectionOpen(true);
+      return;
+    }
+
+    const resolvedService = service || "OpenAI API";
+    const existingCustom = findCustomTool(resolvedService);
+    const mode: ManualModalMode =
+      requestedMode === "edit_custom" ||
+      (requestedMode === "track" &&
+        existingCustom &&
+        canManageCustomTools(isFounding))
+        ? "edit_custom"
+        : "track";
 
     if (
+      mode === "track" &&
       wouldExceedFreeToolLimit(
         isFounding,
         trackedCount,
         resolvedService,
         serviceAmounts,
-      ) ||
-      (custom &&
-        wouldExceedFreeToolLimit(
-          isFounding,
-          trackedCount,
-          "__new_custom__",
-          serviceAmounts,
-        ))
+      )
     ) {
       promptFoundingUpgrade(freeToolLimitMessage(trackedCount));
       return;
@@ -1709,38 +1801,252 @@ export default function Dashboard() {
     const tool = findTool(resolvedService);
     const suggested = tool?.suggestedAmount ?? 0;
     const currentAmount =
-      amount ?? serviceAmounts[resolvedService] ?? (custom ? 0 : suggested);
+      amount ?? serviceAmounts[resolvedService] ?? suggested;
 
-    setIsCustomMode(custom);
-    setCustomName(custom ? "" : resolvedService);
+    setManualModalMode(mode);
+    if (mode === "edit_custom") {
+      setEditingCustomOriginal(resolvedService);
+      setCustomName(resolvedService);
+      setManualUsageBased(
+        existingCustom?.isUsageBased ?? tool?.isUsageBased ?? true,
+      );
+    } else {
+      setEditingCustomOriginal(null);
+      setCustomName("");
+      setManualUsageBased(tool?.isUsageBased ?? true);
+    }
     setManualService(resolvedService);
-    setManualUsageBased(tool?.isUsageBased ?? true);
     setManualAmount(
       amount !== undefined || serviceAmounts[resolvedService] !== undefined
         ? currentAmount.toFixed(2)
-        : custom
-          ? ""
-          : suggested > 0
-            ? suggested.toFixed(2)
-            : "",
+        : suggested > 0
+          ? suggested.toFixed(2)
+          : "",
     );
     setManualPeriod(period ?? "");
     setManualError(null);
     setIsManualCorrectionOpen(true);
   }
 
+  function renameTrackedService(from: string, to: string) {
+    if (from === to) return;
+
+    const amount = serviceAmounts[from];
+    if (amount !== undefined) {
+      setServiceAmounts((current) => {
+        const next = { ...current };
+        delete next[from];
+        next[to] = amount;
+        return next;
+      });
+    }
+
+    setScanHistory((current) => {
+      const next = current.map((scan) =>
+        scan.service === from ? { ...scan, service: to } : scan,
+      );
+      window.localStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+
+    if (hiddenTools.includes(from) || hiddenTools.includes(to)) {
+      persistPrefs({
+        hiddenTools: [
+          ...hiddenTools.filter(
+            (name) =>
+              name.toLowerCase() !== from.toLowerCase() &&
+              name.toLowerCase() !== to.toLowerCase(),
+          ),
+          ...(hiddenTools.some((name) => name.toLowerCase() === from.toLowerCase())
+            ? [to]
+            : []),
+        ],
+      });
+    }
+
+    const supabase = supabaseRef.current;
+    if (supabase && isLoggedIn && amount !== undefined) {
+      setCloudSyncStatus("syncing");
+      void deleteBillingScansForService(supabase, from)
+        .then(() =>
+          insertBillingScan(supabase, {
+            id: crypto.randomUUID(),
+            service: to,
+            amountUsd: amount,
+            billingPeriod: manualPeriod.trim() || null,
+            confidence: "high",
+            scannedAt: new Date().toISOString(),
+          }),
+        )
+        .then(() => {
+          setCloudSyncStatus("synced");
+          window.setTimeout(() => setCloudSyncStatus("idle"), 2500);
+        })
+        .catch(() => setCloudSyncStatus("error"));
+    }
+  }
+
   function saveManualCorrection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const amount = Number.parseFloat(manualAmount);
-    const resolvedName = (
-      isCustomMode ? customName : manualService
-    ).trim();
 
-    if (!isValidServiceName(resolvedName)) {
-      setManualError("Enter a tool name (1–64 characters).");
+    if (manualModalMode === "add_custom" || manualModalMode === "edit_custom") {
+      if (!canManageCustomTools(isFounding)) {
+        setManualError(foundingUpgradeHint("Custom tools"));
+        promptFoundingUpgrade(foundingUpgradeHint("Custom tools"));
+        return;
+      }
+
+      const resolvedName = customName.trim();
+      if (!isValidServiceName(resolvedName)) {
+        setManualError("Enter a tool name (1–64 characters).");
+        return;
+      }
+      if (isPresetName(resolvedName)) {
+        setManualError(
+          "That name is a built-in preset. Choose a different custom name.",
+        );
+        return;
+      }
+
+      const amountText = manualAmount.trim();
+      const hasAmount = amountText.length > 0;
+      const amount = hasAmount ? Number.parseFloat(amountText) : null;
+      if (hasAmount && (!Number.isFinite(amount) || (amount as number) < 0)) {
+        setManualError("Enter a valid USD amount of zero or more.");
+        return;
+      }
+
+      if (manualModalMode === "add_custom") {
+        if (findCustomTool(resolvedName)) {
+          setManualError("You already have a custom tool with that name.");
+          return;
+        }
+        if (
+          hasAmount &&
+          wouldExceedFreeToolLimit(
+            isFounding,
+            trackedCount,
+            resolvedName,
+            serviceAmounts,
+          )
+        ) {
+          setManualError(freeToolLimitMessage(trackedCount));
+          promptFoundingUpgrade(freeToolLimitMessage(trackedCount));
+          return;
+        }
+
+        persistPrefs({
+          customTools: [
+            ...customTools,
+            {
+              name: resolvedName,
+              isUsageBased: manualUsageBased,
+              suggestedAmount: amount ?? 0,
+            },
+          ],
+          hiddenTools: hiddenTools.filter(
+            (name) => name.toLowerCase() !== resolvedName.toLowerCase(),
+          ),
+        });
+
+        if (hasAmount && amount != null) {
+          const saved = saveBillingScan({
+            id: crypto.randomUUID(),
+            service: resolvedName,
+            amountUsd: Math.round(amount * 100) / 100,
+            billingPeriod:
+              manualPeriod.trim() ||
+              (manualUsageBased ? null : "Monthly subscription"),
+            confidence: "high",
+            scannedAt: new Date().toISOString(),
+          });
+          if (!saved) return;
+          setScanMessage(
+            `${resolvedName} added · $${amount.toFixed(2)} tracked`,
+          );
+        } else {
+          setScanMessage(`${resolvedName} added to your tools`);
+        }
+        setScanStatus("success");
+        setIsManualCorrectionOpen(false);
+        return;
+      }
+
+      // edit_custom
+      const original = editingCustomOriginal;
+      if (!original || !findCustomTool(original)) {
+        setManualError("This custom tool is no longer available.");
+        return;
+      }
+
+      const nameChanged =
+        original.toLowerCase() !== resolvedName.toLowerCase();
+      if (nameChanged && findCustomTool(resolvedName)) {
+        setManualError("You already have a custom tool with that name.");
+        return;
+      }
+
+      if (
+        hasAmount &&
+        nameChanged &&
+        wouldExceedFreeToolLimit(
+          isFounding,
+          trackedCount,
+          resolvedName,
+          serviceAmounts,
+        )
+      ) {
+        // Renaming onto a new key shouldn't trip the free limit for Pro, but keep guard.
+        setManualError(freeToolLimitMessage(trackedCount));
+        return;
+      }
+
+      const nextCustom = customTools.map((tool) =>
+        tool.name.toLowerCase() === original.toLowerCase()
+          ? {
+              name: resolvedName,
+              isUsageBased: manualUsageBased,
+              suggestedAmount: amount ?? tool.suggestedAmount,
+            }
+          : tool,
+      );
+      persistPrefs({ customTools: nextCustom });
+
+      if (nameChanged) {
+        renameTrackedService(original, resolvedName);
+      }
+
+      if (hasAmount && amount != null) {
+        const saved = saveBillingScan({
+          id: crypto.randomUUID(),
+          service: resolvedName,
+          amountUsd: Math.round(amount * 100) / 100,
+          billingPeriod:
+            manualPeriod.trim() ||
+            (manualUsageBased ? null : "Monthly subscription"),
+          confidence: "high",
+          scannedAt: new Date().toISOString(),
+        });
+        if (!saved) return;
+        setScanMessage(
+          `${resolvedName} updated · $${amount.toFixed(2)} saved`,
+        );
+      } else {
+        setScanMessage(`${resolvedName} updated`);
+      }
+      setScanStatus("success");
+      setIsManualCorrectionOpen(false);
       return;
     }
 
+    // track mode — amount on an existing catalog tool only
+    const resolvedName = manualService.trim();
+    if (!isValidServiceName(resolvedName)) {
+      setManualError("Pick a tool from the list.");
+      return;
+    }
+
+    const amount = Number.parseFloat(manualAmount);
     if (!Number.isFinite(amount) || amount < 0) {
       setManualError("Enter a valid USD amount of zero or more.");
       return;
@@ -1759,53 +2065,20 @@ export default function Dashboard() {
       return;
     }
 
-    const existingCustom = customTools.some(
-      (tool) => tool.name.toLowerCase() === resolvedName.toLowerCase(),
-    );
-    const isPreset = (PRESET_SERVICES as readonly string[]).includes(
-      resolvedName,
-    );
-
-    if (!isPreset && !canManageCustomTools(isFounding)) {
-      setManualError(foundingUpgradeHint("Custom tools"));
-      promptFoundingUpgrade(foundingUpgradeHint("Custom tools"));
-      return;
-    }
-
-    if (!isPreset && !existingCustom) {
-      const nextCustom: CustomToolPref[] = [
-        ...customTools,
-        {
-          name: resolvedName,
-          isUsageBased: manualUsageBased,
-          suggestedAmount: amount,
-        },
-      ];
-      persistPrefs({ customTools: nextCustom });
-    } else if (!isPreset && existingCustom) {
-      persistPrefs({
-        customTools: customTools.map((tool) =>
-          tool.name.toLowerCase() === resolvedName.toLowerCase()
-            ? { ...tool, isUsageBased: manualUsageBased }
-            : tool,
-        ),
-      });
-    }
-
-    // Unhide if it was hidden
     if (hiddenTools.includes(resolvedName)) {
       persistPrefs({
         hiddenTools: hiddenTools.filter((name) => name !== resolvedName),
       });
     }
 
+    const tool = findTool(resolvedName);
     const saved = saveBillingScan({
       id: crypto.randomUUID(),
       service: resolvedName,
       amountUsd: Math.round(amount * 100) / 100,
       billingPeriod:
         manualPeriod.trim() ||
-        (manualUsageBased ? null : "Monthly subscription"),
+        (tool && !tool.isUsageBased ? "Monthly subscription" : null),
       confidence: "high",
       scannedAt: new Date().toISOString(),
     });
@@ -1867,7 +2140,6 @@ export default function Dashboard() {
           hinted,
           typeof result.amountUsd === "number" ? result.amountUsd : undefined,
           result.billingPeriod ?? null,
-          { custom: false },
         );
         document
           .getElementById("founding-member")
@@ -1930,7 +2202,7 @@ export default function Dashboard() {
           ? error.message
           : "The billing scanner could not analyze this image.",
       );
-      openManualCorrection("OpenAI API", undefined, null, { custom: false });
+      openManualCorrection("OpenAI API");
     }
   }
 
@@ -2642,14 +2914,14 @@ export default function Dashboard() {
                   onClick={() =>
                     isFounding
                       ? openManualCorrection("", undefined, null, {
-                          custom: true,
+                          mode: "add_custom",
                         })
                       : openManualCorrection("OpenAI API")
                   }
                   className="inline-flex items-center gap-1 text-sm text-sage-soft transition hover:text-bone"
                 >
                   <Plus className="h-3.5 w-3.5" />
-                  {isFounding ? "Add tool" : "Track preset"}
+                  {isFounding ? "Add custom tool" : "Track preset"}
                 </button>
               </div>
             </div>
@@ -2683,12 +2955,12 @@ export default function Dashboard() {
                     type="button"
                     onClick={() =>
                       openManualCorrection("", undefined, null, {
-                        custom: true,
+                        mode: "add_custom",
                       })
                     }
                     className="rounded-full border border-sage/40 bg-sage/10 px-3 py-1.5 text-[12px] text-sage-soft transition hover:text-bone"
                   >
-                    + Custom tool
+                    + Add custom tool
                   </button>
                 ) : (
                   <button
@@ -3027,11 +3299,11 @@ export default function Dashboard() {
 
       {isManualCorrectionOpen && (
         <ManualCorrectionModal
+          mode={manualModalMode}
           amount={manualAmount}
           period={manualPeriod}
           service={manualService}
           serviceOptions={serviceOptions}
-          isCustomMode={isCustomMode}
           customName={customName}
           isUsageBased={manualUsageBased}
           canUseCustomTools={allowCustomTools}
@@ -3047,30 +3319,36 @@ export default function Dashboard() {
               setManualAmount(tool.suggestedAmount.toFixed(2));
             }
           }}
-          onCustomModeChange={setIsCustomMode}
           onCustomNameChange={setCustomName}
           onUsageBasedChange={setManualUsageBased}
+          onSwitchToAddCustom={() =>
+            openManualCorrection("", undefined, null, { mode: "add_custom" })
+          }
+          onSwitchToTrack={() => openManualCorrection(manualService)}
           onClose={() => setIsManualCorrectionOpen(false)}
           onSave={saveManualCorrection}
           canClear={
             serviceAmounts[
-              isCustomMode ? customName.trim() || manualService : manualService
+              manualModalMode === "edit_custom"
+                ? (editingCustomOriginal ?? customName.trim())
+                : manualService
             ] !== undefined
           }
           onClear={() =>
             clearTrackedTool(
-              isCustomMode ? customName.trim() || manualService : manualService,
+              manualModalMode === "edit_custom"
+                ? (editingCustomOriginal ?? customName.trim())
+                : manualService,
             )
           }
           canDeleteCustom={
             allowCustomTools &&
-            !isCustomMode &&
-            customTools.some(
-              (tool) =>
-                tool.name.toLowerCase() === manualService.toLowerCase(),
-            )
+            manualModalMode === "edit_custom" &&
+            Boolean(editingCustomOriginal)
           }
-          onDeleteCustom={() => deleteCustomTool(manualService)}
+          onDeleteCustom={() =>
+            deleteCustomTool(editingCustomOriginal ?? customName.trim())
+          }
           onRequestCustomUpgrade={() =>
             promptFoundingUpgrade(foundingUpgradeHint("Custom tools"))
           }
