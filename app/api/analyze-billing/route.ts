@@ -1,5 +1,12 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
+import { isFoundingForSession } from "@/lib/founding";
+import {
+  FOUNDING_VISION_PROVIDERS,
+  FREE_VISION_PROVIDERS,
+  isVisionProvider,
+} from "@/lib/vision-providers";
+import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -11,8 +18,14 @@ const ALLOWED_IMAGE_TYPES = new Set([
   "image/webp",
 ]);
 
+const ALL_VISION_PROVIDERS = [
+  ...FREE_VISION_PROVIDERS,
+  ...FOUNDING_VISION_PROVIDERS,
+  "Other",
+] as const;
+
 type BillingAnalysis = {
-  service: "OpenAI" | "Anthropic" | "Other" | null;
+  service: (typeof ALL_VISION_PROVIDERS)[number] | null;
   amountUsd: number | null;
   billingPeriod: string | null;
   confidence: "high" | "medium" | "low";
@@ -22,15 +35,11 @@ function isBillingAnalysis(value: unknown): value is BillingAnalysis {
   if (!value || typeof value !== "object") return false;
 
   const analysis = value as Record<string, unknown>;
-  const validServices = new Set(["OpenAI", "Anthropic", "Other", null]);
+  const validServices = new Set<unknown>([...ALL_VISION_PROVIDERS, null]);
   const validConfidence = new Set(["high", "medium", "low"]);
-  const service =
-    analysis.service === "OpenAI" ||
-    analysis.service === "Anthropic" ||
-    analysis.service === "Other" ||
-    analysis.service === null
-      ? analysis.service
-      : undefined;
+  const service = validServices.has(analysis.service)
+    ? (analysis.service as BillingAnalysis["service"])
+    : undefined;
   const confidence =
     analysis.confidence === "high" ||
     analysis.confidence === "medium" ||
@@ -40,15 +49,13 @@ function isBillingAnalysis(value: unknown): value is BillingAnalysis {
 
   return (
     service !== undefined &&
-    validServices.has(service) &&
     (analysis.amountUsd === null ||
       (typeof analysis.amountUsd === "number" &&
         Number.isFinite(analysis.amountUsd) &&
         analysis.amountUsd >= 0)) &&
     (analysis.billingPeriod === null ||
       typeof analysis.billingPeriod === "string") &&
-    confidence !== undefined &&
-    validConfidence.has(confidence)
+    confidence !== undefined
   );
 }
 
@@ -94,13 +101,16 @@ export async function POST(request: Request) {
       );
     }
 
+    const supabase = await createClient();
+    const founding = await isFoundingForSession(supabase);
+
     const imageBase64 = Buffer.from(await image.arrayBuffer()).toString("base64");
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0,
-      max_tokens: 220,
+      max_tokens: 260,
       response_format: {
         type: "json_schema",
         json_schema: {
@@ -112,7 +122,10 @@ export async function POST(request: Request) {
             properties: {
               service: {
                 anyOf: [
-                  { type: "string", enum: ["OpenAI", "Anthropic", "Other"] },
+                  {
+                    type: "string",
+                    enum: ["OpenAI", "Anthropic", "Gemini", "Grok", "Other"],
+                  },
                   { type: "null" },
                 ],
               },
@@ -136,27 +149,27 @@ export async function POST(request: Request) {
           role: "system",
           content: [
             "You are ToRay's strict billing-screenshot classifier and OCR engine.",
-            "You extract current-period API usage totals ONLY from OpenAI Platform or Anthropic Console billing/usage screens.",
+            "Extract current-period usage/billing totals from supported cloud consoles only.",
             "",
             "PROVIDER IDENTIFICATION (do this first; never skip):",
             "- Default assumption: the image is NOT a supported billing screen. Prefer service=Other or null unless evidence is clear.",
-            "- Never choose OpenAI merely because this request uses an OpenAI model, the word API appears, or a dollar amount is visible.",
-            "- OpenAI is allowed ONLY with explicit OpenAI Platform / API billing evidence, such as: platform.openai.com, usage.openai.com, openai.com/settings/organization, navigation like Usage / Billing / Limits / Cost, model-usage tables (gpt-4o, gpt-4.1, o-series), organization spend, or clear OpenAI Platform chrome.",
-            "- Anthropic is allowed ONLY with explicit Anthropic Console evidence, such as: console.anthropic.com, Claude API console chrome, Workspaces / Usage / Billing / Cost, or Claude model usage tables (claude-*).",
-            "- ChatGPT consumer product is NOT OpenAI Platform: chatgpt.com, ChatGPT Plus/Pro subscription, ChatGPT settings, mobile ChatGPT app, custom GPTs store, or ChatGPT memory settings → service=Other, amountUsd=null.",
-            "- Also reject as Other/null: Midjourney, Cursor, GitHub Copilot, Google AI Studio/Gemini, Perplexity, Replicate, Hugging Face, Stripe receipts, bank/card statements, invoices, email receipts, Slack, Notion, random photos, memes, desktop wallpaper, and any non-billing UI.",
-            "- If branding is mixed, cropped, blurred, or only a generic dollar amount is visible without provider chrome → service=Other or null, confidence=low, amountUsd=null.",
+            "- OpenAI: ONLY OpenAI Platform / API billing (platform.openai.com, usage.openai.com, org Usage/Billing/Cost). ChatGPT consumer (chatgpt.com, Plus/Pro settings) → Other.",
+            "- Anthropic: ONLY Anthropic Console / Claude API (console.anthropic.com, Workspaces Usage/Billing/Cost).",
+            "- Gemini: ONLY Google AI Studio / Gemini API / Cloud billing for Gemini API (aistudio.google.com, Google AI usage/billing chrome, Gemini API cost tables). Consumer Gemini app subscription alone → Other.",
+            "- Grok: ONLY xAI / Grok API console billing/usage (console.x.ai or clear xAI API usage/billing chrome). Consumer grok.x.ai chat subscription alone → Other.",
+            "- Also reject as Other/null: Midjourney, Cursor, GitHub Copilot, Perplexity, Replicate, Hugging Face, Stripe receipts, bank statements, invoices, email receipts, random photos.",
+            "- If branding is mixed, cropped, blurred, or only a generic dollar amount is visible → service=Other or null, confidence=low, amountUsd=null.",
             "",
             "AMOUNT EXTRACTION (only after a supported provider is confirmed):",
-            "- amountUsd must be the explicit current-period total spend / total usage / total cost tied to the selected billing period.",
-            "- Ignore credits, prepaid balance, available balance, payment due, tax-only lines, plan subscription prices, projected/forecast spend, daily cost, and single model/line-item costs when a period total exists.",
-            "- Never invent or sum line items. If the period total is missing or ambiguous → amountUsd=null and confidence=low.",
-            "- Copy the visible billing period string into billingPeriod when present; otherwise null.",
-            "- Accept USD only. Do not convert other currencies.",
+            "- amountUsd must be the explicit current-period total spend / total usage / total cost.",
+            "- Ignore credits, prepaid balance, payment due, tax-only lines, plan prices, projected spend, and single line-items when a period total exists.",
+            "- Never invent or sum line items. If the period total is missing → amountUsd=null and confidence=low.",
+            "- Copy the visible billing period into billingPeriod when present; otherwise null.",
+            "- USD only.",
             "",
             "CONFIDENCE:",
             "- high: provider identity and period total are unmistakable.",
-            "- medium: provider is clear but layout is partially cropped or labels are slightly ambiguous.",
+            "- medium: provider is clear but layout is partially cropped.",
             "- low: provider or total is uncertain. If low, set service to Other or null and amountUsd to null.",
             "",
             "Return only JSON matching the schema.",
@@ -169,7 +182,8 @@ export async function POST(request: Request) {
               type: "text",
               text: [
                 "Classify this screenshot first.",
-                "If it is not a clear OpenAI Platform or Anthropic Console usage/billing screen, return service=Other (or null), amountUsd=null, confidence=low.",
+                "If it is not a clear supported billing/usage console, return service=Other (or null), amountUsd=null, confidence=low.",
+                "Supported providers: OpenAI Platform, Anthropic Console, Google AI Studio/Gemini API billing, xAI/Grok API billing.",
                 "Only if the provider is clearly supported, extract the current-period USD total.",
               ].join(" "),
             },
@@ -201,21 +215,15 @@ export async function POST(request: Request) {
       );
     }
 
-    const supportedService =
-      parsed.service === "OpenAI" || parsed.service === "Anthropic"
-        ? parsed.service
-        : null;
-
-    // Reject weak / unsupported classifications so non-billing photos never land on OpenAI.
     if (
-      !supportedService ||
+      !isVisionProvider(parsed.service) ||
       parsed.amountUsd === null ||
       parsed.confidence === "low"
     ) {
       return NextResponse.json(
         {
           error:
-            "This does not look like a clear OpenAI Platform or Anthropic Console billing screen. Enter the amount manually, or upload a usage/billing screenshot.",
+            "This does not look like a clear supported billing console. Enter the amount manually, or upload a usage/billing screenshot.",
           service: parsed.service,
           confidence: parsed.confidence,
         },
@@ -223,11 +231,45 @@ export async function POST(request: Request) {
       );
     }
 
+    const provider = parsed.service;
+    const isFreeProvider = (FREE_VISION_PROVIDERS as readonly string[]).includes(
+      provider,
+    );
+    const isFoundingProvider = (
+      FOUNDING_VISION_PROVIDERS as readonly string[]
+    ).includes(provider);
+
+    if (isFoundingProvider && !founding) {
+      return NextResponse.json(
+        {
+          error:
+            "Gemini and Grok Vision scanning is included with ToRay Pro — $12/mo. Enter the amount manually within your free tool limit, or upgrade.",
+          code: "FOUNDING_REQUIRED",
+          service: provider,
+          confidence: parsed.confidence,
+        },
+        { status: 402 },
+      );
+    }
+
+    if (!isFreeProvider && !isFoundingProvider) {
+      return NextResponse.json(
+        {
+          error:
+            "This provider is not supported for screenshot scan yet. Enter the amount manually.",
+          service: provider,
+          confidence: parsed.confidence,
+        },
+        { status: 422 },
+      );
+    }
+
     return NextResponse.json({
-      service: supportedService,
+      service: provider,
       amountUsd: Math.round(parsed.amountUsd * 100) / 100,
       billingPeriod: parsed.billingPeriod,
       confidence: parsed.confidence,
+      foundingUnlock: isFoundingProvider,
     });
   } catch (error) {
     console.error("[analyze-billing]", error);

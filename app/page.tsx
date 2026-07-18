@@ -35,6 +35,21 @@ import {
   writeHiddenTools,
   type CustomToolPref,
 } from "@/lib/dashboard-prefs";
+import {
+  canExportCsv,
+  canSeeFullOutlook,
+  canUseBudget,
+  FOUNDING_CTA_LABEL,
+  FOUNDING_PLAN_LABEL,
+  FREE_TOOL_LIMIT,
+  freeToolLimitMessage,
+  foundingUpgradeHint,
+  wouldExceedFreeToolLimit,
+} from "@/lib/plan-limits";
+import {
+  isVisionProvider,
+  visionProviderToToolName,
+} from "@/lib/vision-providers";
 import { createClient } from "@/lib/supabase/client";
 
 const INITIAL_SPENT = 0;
@@ -44,6 +59,15 @@ const SCAN_HISTORY_KEY = "toray-billing-scans";
 const STRIPE_URL =
   process.env.NEXT_PUBLIC_STRIPE_PAYMENT_LINK ??
   "https://buy.stripe.com/6oU14m0Lu92V2dL0dx9sk00";
+
+function buildStripeHref(email: string | null) {
+  const url = new URL(STRIPE_URL);
+  url.searchParams.set("client_reference_id", "toray_founding");
+  if (email) {
+    url.searchParams.set("prefilled_email", email);
+  }
+  return url.toString();
+}
 
 type ScanStatus = "idle" | "scanning" | "success" | "error";
 
@@ -201,16 +225,20 @@ const SCAN_STEPS = [
 
 const PRO_FEATURES = [
   {
-    icon: Radar,
-    text: "Cloud backup of spend, budget, and custom tools across devices",
-  },
-  {
-    icon: Shield,
-    text: "Founding price locked at $12/mo for as long as you stay",
+    icon: Plus,
+    text: `Unlimited tools (Free caps at ${FREE_TOOL_LIMIT})`,
   },
   {
     icon: ScanLine,
-    text: "Funds multi-provider Vision (Gemini, Grok receipts) next",
+    text: "Gemini & Grok Vision — AI Studio / xAI billing screenshots",
+  },
+  {
+    icon: Radar,
+    text: "Month-end outlook, budget coaching, and CSV export",
+  },
+  {
+    icon: Shield,
+    text: "ToRay Pro price locked at $12/mo",
   },
 ];
 
@@ -847,6 +875,9 @@ export default function Dashboard() {
   const [cloudSyncStatus, setCloudSyncStatus] = useState<
     "idle" | "syncing" | "synced" | "error"
   >("idle");
+  const [foundingVerifyMessage, setFoundingVerifyMessage] = useState<
+    string | null
+  >(null);
 
   const catalog: ToolDef[] = (() => {
     const base: ToolDef[] = [
@@ -977,17 +1008,73 @@ export default function Dashboard() {
     setIsFounding(local.isFounding);
 
     const params = new URLSearchParams(window.location.search);
-    if (params.get("upgraded") === "1" || params.get("founding") === "1") {
-      setIsFounding(true);
-      writeFounding(true);
-      params.delete("upgraded");
-      params.delete("founding");
-      const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
-      window.history.replaceState({}, "", next);
-    }
+    const stripeSessionId =
+      params.get("stripe_session_id") || params.get("session_id");
 
     const supabase = createClient();
     supabaseRef.current = supabase;
+
+    async function confirmStripeSession(sessionId: string) {
+      try {
+        const response = await fetch(
+          `/api/stripe/confirm?session_id=${encodeURIComponent(sessionId)}`,
+        );
+        const result = (await response.json()) as {
+          isFounding?: boolean;
+          matchesSignedInUser?: boolean;
+          email?: string;
+          error?: string;
+        };
+
+        if (result.isFounding) {
+          setIsFounding(true);
+          writeFounding(true);
+          if (result.matchesSignedInUser) {
+            setFoundingVerifyMessage(
+              "ToRay Pro verified — Gemini & Grok Vision are unlocked.",
+            );
+          } else if (result.email) {
+            setFoundingVerifyMessage(
+              `Checkout verified for ${result.email}. Sign in with that email to unlock Gemini & Grok Vision.`,
+            );
+          } else {
+            setFoundingVerifyMessage(
+              "Checkout verified. Sign in with your Stripe email to unlock Vision extras.",
+            );
+          }
+        } else if (result.error) {
+          setFoundingVerifyMessage(result.error);
+        }
+      } catch {
+        setFoundingVerifyMessage(
+          "Could not verify Stripe checkout. Try signing in with your checkout email.",
+        );
+      } finally {
+        params.delete("stripe_session_id");
+        params.delete("session_id");
+        params.delete("upgraded");
+        params.delete("founding");
+        const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
+        window.history.replaceState({}, "", next);
+      }
+    }
+
+    async function refreshFoundingStatus() {
+      try {
+        const response = await fetch("/api/founding/status");
+        const result = (await response.json()) as {
+          isFounding?: boolean;
+          signedIn?: boolean;
+        };
+        if (result.signedIn) {
+          const next = Boolean(result.isFounding);
+          setIsFounding(next);
+          writeFounding(next);
+        }
+      } catch {
+        // Keep local preference if the status endpoint is unavailable.
+      }
+    }
 
     async function hydrateDashboard() {
       let localHistory: BillingScan[] = [];
@@ -1019,6 +1106,10 @@ export default function Dashboard() {
         );
       }
 
+      if (stripeSessionId) {
+        await confirmStripeSession(stripeSessionId);
+      }
+
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -1040,11 +1131,11 @@ export default function Dashboard() {
       setBudget(remotePrefs.budget);
       setHiddenTools(remotePrefs.hiddenTools);
       setCustomTools(remotePrefs.customTools);
-      setIsFounding(remotePrefs.isFounding);
       writeBudget(remotePrefs.budget);
       writeHiddenTools(remotePrefs.hiddenTools);
       writeCustomTools(remotePrefs.customTools);
-      writeFounding(remotePrefs.isFounding);
+
+      await refreshFoundingStatus();
 
       const remoteHistory = await fetchUserBillingScans(supabase);
       const merged = mergeBillingScanHistories(localHistory, remoteHistory);
@@ -1148,11 +1239,25 @@ export default function Dashboard() {
     setIsSignInOpen(true);
   }
 
+  function promptFoundingUpgrade(message: string) {
+    setFoundingVerifyMessage(message);
+    document
+      .getElementById("founding-member")
+      ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
   function markUpdated(at = new Date()) {
     setLastSyncedAt(formatClock(at));
   }
 
   function commitBudgetDraft() {
+    if (!canUseBudget(isFounding)) {
+      promptFoundingUpgrade(
+        foundingUpgradeHint("Budget and overspend coaching"),
+      );
+      setIsEditingBudget(false);
+      return;
+    }
     const parsed = Number.parseFloat(budgetDraft);
     if (!Number.isFinite(parsed) || parsed <= 0) {
       persistPrefs({ budget: null });
@@ -1177,7 +1282,19 @@ export default function Dashboard() {
     }
   }
 
-  function saveBillingScan(scan: BillingScan) {
+  function saveBillingScan(scan: BillingScan): boolean {
+    if (
+      wouldExceedFreeToolLimit(
+        isFounding,
+        trackedCount,
+        scan.service,
+        serviceAmounts,
+      )
+    ) {
+      promptFoundingUpgrade(freeToolLimitMessage(trackedCount));
+      return false;
+    }
+
     const existingAmount = serviceAmounts[scan.service] ?? 0;
 
     setServiceAmounts((current) => ({
@@ -1192,6 +1309,7 @@ export default function Dashboard() {
     });
     markUpdated();
     void syncScanToCloud(scan);
+    return true;
   }
 
   function clearTrackedTool(name: ServiceName) {
@@ -1263,6 +1381,26 @@ export default function Dashboard() {
     const resolvedService = custom
       ? service || "OpenAI API"
       : service || "OpenAI API";
+
+    if (
+      wouldExceedFreeToolLimit(
+        isFounding,
+        trackedCount,
+        resolvedService,
+        serviceAmounts,
+      ) ||
+      (custom &&
+        wouldExceedFreeToolLimit(
+          isFounding,
+          trackedCount,
+          "__new_custom__",
+          serviceAmounts,
+        ))
+    ) {
+      promptFoundingUpgrade(freeToolLimitMessage(trackedCount));
+      return;
+    }
+
     const tool = findTool(resolvedService);
     const suggested = tool?.suggestedAmount ?? 0;
     const currentAmount =
@@ -1303,6 +1441,19 @@ export default function Dashboard() {
       return;
     }
 
+    if (
+      wouldExceedFreeToolLimit(
+        isFounding,
+        trackedCount,
+        resolvedName,
+        serviceAmounts,
+      )
+    ) {
+      setManualError(freeToolLimitMessage(trackedCount));
+      promptFoundingUpgrade(freeToolLimitMessage(trackedCount));
+      return;
+    }
+
     const existingCustom = customTools.some(
       (tool) => tool.name.toLowerCase() === resolvedName.toLowerCase(),
     );
@@ -1337,7 +1488,7 @@ export default function Dashboard() {
       });
     }
 
-    saveBillingScan({
+    const saved = saveBillingScan({
       id: crypto.randomUUID(),
       service: resolvedName,
       amountUsd: Math.round(amount * 100) / 100,
@@ -1347,6 +1498,8 @@ export default function Dashboard() {
       confidence: "high",
       scannedAt: new Date().toISOString(),
     });
+    if (!saved) return;
+
     setScanStatus("success");
     setScanMessage(
       `${resolvedName} · $${amount.toFixed(2)} saved to your dashboard`,
@@ -1382,29 +1535,63 @@ export default function Dashboard() {
         body: formData,
       });
       const result = (await response.json()) as {
-        service?: "OpenAI" | "Anthropic" | "Other" | null;
+        service?: string | null;
         amountUsd?: number;
         billingPeriod?: string | null;
         confidence?: "high" | "medium" | "low";
         error?: string;
+        code?: string;
       };
+
+      if (response.status === 402 || result.code === "FOUNDING_REQUIRED") {
+        const hinted =
+          result.service === "Gemini"
+            ? "Gemini API"
+            : result.service === "Grok"
+              ? "Grok"
+              : "Gemini API";
+        setScanStatus("error");
+        setScanMessage(
+          result.error ??
+            "Gemini and Grok Vision is included with ToRay Pro — $12/mo. Enter the amount manually within your free tool limit, or upgrade.",
+        );
+        openManualCorrection(hinted, undefined, null, { custom: false });
+        document
+          .getElementById("founding-member")
+          ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        return;
+      }
 
       if (
         !response.ok ||
         typeof result.amountUsd !== "number" ||
         result.confidence === "low" ||
-        (result.service !== "OpenAI" && result.service !== "Anthropic")
+        !isVisionProvider(result.service)
       ) {
         throw new Error(
           result.error ??
-            "This does not look like a clear OpenAI Platform or Anthropic Console billing screen. Use Add tool to enter any other provider manually.",
+            "This does not look like a clear supported billing screen. Use Add tool to enter any provider manually.",
         );
       }
 
       setScanStep(2);
       const amountUsd = result.amountUsd;
-      const serviceName: ServiceName =
-        result.service === "OpenAI" ? "OpenAI API" : "Anthropic API";
+      const serviceName: ServiceName = visionProviderToToolName(result.service);
+
+      if (
+        wouldExceedFreeToolLimit(
+          isFounding,
+          trackedCount,
+          serviceName,
+          serviceAmounts,
+        )
+      ) {
+        setScanStatus("error");
+        setScanMessage(freeToolLimitMessage(trackedCount));
+        promptFoundingUpgrade(freeToolLimitMessage(trackedCount));
+        return;
+      }
+
       const scan: BillingScan = {
         id: crypto.randomUUID(),
         service: serviceName,
@@ -1414,7 +1601,11 @@ export default function Dashboard() {
         scannedAt: new Date().toISOString(),
       };
 
-      saveBillingScan(scan);
+      if (!saveBillingScan(scan)) {
+        setScanStatus("error");
+        setScanMessage(freeToolLimitMessage(trackedCount));
+        return;
+      }
       setScanStatus("success");
       setScanMessage(
         `${serviceName} · $${amountUsd.toFixed(2)} saved to your dashboard`,
@@ -1426,7 +1617,7 @@ export default function Dashboard() {
           ? error.message
           : "The billing scanner could not analyze this image.",
       );
-      openManualCorrection("Gemini API", undefined, null, { custom: false });
+      openManualCorrection("OpenAI API", undefined, null, { custom: false });
     }
   }
 
@@ -1467,6 +1658,10 @@ export default function Dashboard() {
   }
 
   function exportCsv() {
+    if (!canExportCsv(isFounding)) {
+      promptFoundingUpgrade(foundingUpgradeHint("CSV export"));
+      return;
+    }
     downloadSpendCsv({
       amounts: serviceAmounts,
       history: scanHistory,
@@ -1475,7 +1670,20 @@ export default function Dashboard() {
     });
   }
 
-  const stripeHref = `${STRIPE_URL}${STRIPE_URL.includes("?") ? "&" : "?"}client_reference_id=toray_founding`;
+  const stripeHref = buildStripeHref(userEmail);
+  const showFullOutlook = canSeeFullOutlook(isFounding);
+  const showBudgetControls = canUseBudget(isFounding);
+  const historyLabel = isFounding
+    ? scanHistory.length === 0
+      ? isLoggedIn
+        ? "No updates yet · cloud ready"
+        : "No updates yet · this device"
+      : `${scanHistory.length} update${scanHistory.length === 1 ? "" : "s"}${isLoggedIn ? " · cloud" : " · this device"}`
+    : scanHistory.length === 0
+      ? isLoggedIn
+        ? `Free · ${FREE_TOOL_LIMIT} tools · backed up`
+        : `Free · ${FREE_TOOL_LIMIT} tools · this device`
+      : `Latest update${isLoggedIn ? " · backed up" : " · this device"}`;
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-background font-sans text-bone selection:bg-sage/40">
@@ -1506,10 +1714,14 @@ export default function Dashboard() {
                   {cloudSyncStatus === "syncing"
                     ? "Syncing…"
                     : cloudSyncStatus === "synced"
-                      ? "Cloud synced"
+                      ? isFounding
+                        ? "Cloud synced · ToRay Pro"
+                        : `Backed up (Free · ${FREE_TOOL_LIMIT} tools)`
                       : cloudSyncStatus === "error"
                         ? "Sync failed"
-                        : "Cloud on"}
+                        : isFounding
+                          ? "Cloud on · ToRay Pro"
+                          : `Backed up (Free · ${FREE_TOOL_LIMIT} tools)`}
                 </span>
                 <span className="hidden max-w-[140px] truncate text-sm text-bone-muted sm:block">
                   {userEmail}
@@ -1535,8 +1747,6 @@ export default function Dashboard() {
             {!isFounding && (
               <a
                 href={stripeHref}
-                target="_blank"
-                rel="noopener noreferrer"
                 className="rounded-full border border-hairline px-3 py-2 text-sm text-bone-muted transition hover:border-sage-soft/40 hover:text-bone"
               >
                 Upgrade
@@ -1554,9 +1764,9 @@ export default function Dashboard() {
               Know your AI burn before your card does.
             </h1>
             <p className="mt-4 max-w-md text-[15px] leading-relaxed text-bone-muted">
-              Scan OpenAI or Anthropic screenshots, then track Gemini, Grok,
-              Runway, Cursor, or any custom tool by hand. Free on this device —
-              sign in when you want a backup.
+              Free: scan OpenAI or Anthropic and track up to {FREE_TOOL_LIMIT}{" "}
+              tools on this device. To run a full stack — unlimited tools,
+              Gemini/Grok Vision, outlook, budget, and CSV — you need ToRay Pro at $12/mo.
             </p>
             <p className="mt-3 text-[13px] text-bone-muted">
               Screenshots are analyzed securely and not stored by ToRay. Totals
@@ -1579,11 +1789,7 @@ export default function Dashboard() {
                   ? "Saving to cloud…"
                   : cloudSyncStatus === "error"
                     ? "Cloud save failed — kept on this device"
-                    : scanHistory.length === 0
-                      ? isLoggedIn
-                        ? "No updates yet · cloud ready"
-                        : "No updates yet · this device"
-                      : `${scanHistory.length} update${scanHistory.length === 1 ? "" : "s"}${isLoggedIn ? " · cloud" : " · this device"}`}
+                    : historyLabel}
               </span>
             </div>
 
@@ -1615,7 +1821,9 @@ export default function Dashboard() {
                   )}
                   <h2 className="mt-2 font-serif text-xl text-bone">Drop a billing screenshot</h2>
                   <p className="mt-2 max-w-[280px] text-[13px] leading-relaxed text-bone-muted">
-                    OpenAI Platform or Anthropic Console for instant Vision. Any other provider — add it as a tool below.
+                    {isFounding
+                      ? "OpenAI, Anthropic, Gemini, or Grok billing consoles — Vision unlocked."
+                      : `OpenAI / Anthropic Vision free · up to ${FREE_TOOL_LIMIT} tools. Gemini/Grok Vision + unlimited tools with ToRay Pro.`}
                   </p>
                   <button type="button" onClick={() => fileInputRef.current?.click()} className="mt-5 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition hover:bg-sage-glow">
                     Choose file
@@ -1685,7 +1893,7 @@ export default function Dashboard() {
             <div className="flex items-center justify-between gap-2">
               <Eyebrow>This month</Eyebrow>
               <div className="flex items-center gap-2">
-                {budget != null && !isEditingBudget && (
+                {showBudgetControls && budget != null && !isEditingBudget && (
                   <button
                     type="button"
                     onClick={() => {
@@ -1697,8 +1905,14 @@ export default function Dashboard() {
                     Edit budget
                   </button>
                 )}
-                <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${!hasSpend ? "bg-bone/10 text-bone-muted" : isOverBudget ? "bg-danger/20 text-danger" : "bg-sage/25 text-mint"}`}>
-                  {!hasSpend ? "Empty" : isOverBudget ? "Over budget" : budget != null ? "On track" : "Tracked"}
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${!hasSpend ? "bg-bone/10 text-bone-muted" : showBudgetControls && isOverBudget ? "bg-danger/20 text-danger" : "bg-sage/25 text-mint"}`}>
+                  {!hasSpend
+                    ? "Empty"
+                    : showBudgetControls && isOverBudget
+                      ? "Over budget"
+                      : showBudgetControls && budget != null
+                        ? "On track"
+                        : "Tracked"}
                 </span>
               </div>
             </div>
@@ -1706,14 +1920,27 @@ export default function Dashboard() {
               <span className={`font-serif text-4xl tracking-[-0.02em] tabular-nums transition-colors duration-500 ${scanStatus === "success" ? "text-mint" : "text-bone"}`}>
                 ${animatedSpent.toFixed(2)}
               </span>
-              {budget != null && !isEditingBudget ? (
+              {showBudgetControls && budget != null && !isEditingBudget ? (
                 <span className="text-sm tabular-nums text-bone-muted">
                   spent · ${budget.toFixed(0)} budget
                 </span>
               ) : null}
             </div>
             <div className="mt-6">
-              {budget != null && !isEditingBudget ? (
+              {!showBudgetControls ? (
+                <div>
+                  <p className="text-sm text-bone-muted">
+                    Spent so far on this device. Budget coaching unlocks with{" "}
+                    {FOUNDING_PLAN_LABEL}.
+                  </p>
+                  <a
+                    href={stripeHref}
+                    className="mt-3 inline-flex rounded-full border border-hairline px-3 py-1.5 text-[12px] text-sage-soft transition hover:text-bone"
+                  >
+                    Set a budget with {FOUNDING_PLAN_LABEL}
+                  </a>
+                </div>
+              ) : budget != null && !isEditingBudget ? (
                 <>
                   <Meter ratio={meterRatio} />
                   <div className="mt-2.5 flex justify-between text-xs text-bone-muted">
@@ -1797,34 +2024,38 @@ export default function Dashboard() {
                   )}
                 </div>
               )}
-              <p className={`mt-3 text-[13px] ${isOverBudget ? "text-danger" : "text-bone-muted"}`}>
-                {!hasSpend
-                  ? "Scan or add a tool to see month-end outlook."
-                  : isOverBudget
-                    ? `Outlook $${projected.toFixed(0)} by ${monthEnd} — $${overspend.toFixed(0)} over.`
-                    : `Outlook $${projected.toFixed(0)} by ${monthEnd}`}
-              </p>
-              {isOverBudget && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const suggested = Math.ceil(projected / 10) * 10;
-                      persistPrefs({ budget: suggested });
-                      setIsEditingBudget(false);
-                    }}
-                    className="rounded-full border border-hairline px-3 py-1 text-[12px] text-sage-soft transition hover:text-bone"
-                  >
-                    Raise budget to ${Math.ceil(projected / 10) * 10}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={hideAllUnset}
-                    className="rounded-full border border-hairline px-3 py-1 text-[12px] text-bone-muted transition hover:text-bone"
-                  >
-                    Hide unused tools
-                  </button>
-                </div>
+              {showBudgetControls && (
+                <>
+                  <p className={`mt-3 text-[13px] ${isOverBudget ? "text-danger" : "text-bone-muted"}`}>
+                    {!hasSpend
+                      ? "Scan or add a tool to see month-end outlook."
+                      : isOverBudget
+                        ? `Outlook $${projected.toFixed(0)} by ${monthEnd} — $${overspend.toFixed(0)} over.`
+                        : `Outlook $${projected.toFixed(0)} by ${monthEnd}`}
+                  </p>
+                  {isOverBudget && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const suggested = Math.ceil(projected / 10) * 10;
+                          persistPrefs({ budget: suggested });
+                          setIsEditingBudget(false);
+                        }}
+                        className="rounded-full border border-hairline px-3 py-1 text-[12px] text-sage-soft transition hover:text-bone"
+                      >
+                        Raise budget to ${Math.ceil(projected / 10) * 10}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={hideAllUnset}
+                        className="rounded-full border border-hairline px-3 py-1 text-[12px] text-bone-muted transition hover:text-bone"
+                      >
+                        Hide unused tools
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -1833,17 +2064,25 @@ export default function Dashboard() {
             <div className="flex items-center justify-between">
               <Eyebrow>Tools tracked</Eyebrow>
               <span className="rounded-full bg-sage/20 px-2.5 py-1 text-[11px] font-medium text-mint">
-                {trackedCount} set
+                {isFounding
+                  ? `${trackedCount} set`
+                  : `${trackedCount}/${FREE_TOOL_LIMIT} free`}
               </span>
             </div>
             <div className="mt-4 flex items-baseline gap-2">
               <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-bone">{trackedCount}</span>
-              <span className="text-sm text-bone-muted">visible {visibleTools.length}</span>
+              <span className="text-sm text-bone-muted">
+                {isFounding ? `visible ${visibleTools.length}` : `of ${FREE_TOOL_LIMIT} free`}
+              </span>
             </div>
             <p className="mt-6 text-sm leading-relaxed text-bone-muted">
               {trackedCount === 0
-                ? "Add Gemini, Grok, or any tool — your list, not ours."
-                : "Hide presets you don’t use so this stays your dashboard."}
+                ? `Track up to ${FREE_TOOL_LIMIT} tools free — then ToRay Pro for your full stack.`
+                : !isFounding && trackedCount >= FREE_TOOL_LIMIT
+                  ? `Free limit reached. Unlimited tools with ${FOUNDING_PLAN_LABEL} — $12/mo.`
+                  : !isFounding
+                    ? `${FREE_TOOL_LIMIT - trackedCount} free slot${FREE_TOOL_LIMIT - trackedCount === 1 ? "" : "s"} left. Full stacks need ToRay Pro.`
+                    : "Hide presets you don’t use so this stays your dashboard."}
             </p>
           </div>
 
@@ -1855,15 +2094,31 @@ export default function Dashboard() {
               </span>
             </div>
             <div className="mt-4 flex items-baseline gap-2">
-              <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-bone">
-                ${hasSpend ? projected.toFixed(0) : "0"}
-              </span>
+              {showFullOutlook ? (
+                <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-bone">
+                  ${hasSpend ? projected.toFixed(0) : "0"}
+                </span>
+              ) : (
+                <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-bone/40 blur-[6px] select-none">
+                  ${hasSpend ? projected.toFixed(0) : "128"}
+                </span>
+              )}
             </div>
             <p className="mt-6 text-sm leading-relaxed text-bone-muted">
-              {!hasSpend
-                ? "Fixed plans stay flat. Usage-based spend is paced to month-end."
-                : `$${fixedTracked.toFixed(0)} fixed + usage paced from $${usageTracked.toFixed(0)} so far.`}
+              {!showFullOutlook
+                ? foundingUpgradeHint("Month-end outlook")
+                : !hasSpend
+                  ? "Fixed plans stay flat. Usage-based spend is paced to month-end."
+                  : `$${fixedTracked.toFixed(0)} fixed + usage paced from $${usageTracked.toFixed(0)} so far.`}
             </p>
+            {!showFullOutlook && (
+              <a
+                href={stripeHref}
+                className="mt-3 inline-flex text-[12px] text-sage-soft underline-offset-2 hover:text-bone hover:underline"
+              >
+                Unlock outlook — ToRay Pro · $12/mo
+              </a>
+            )}
           </div>
         </section>
 
@@ -1873,7 +2128,9 @@ export default function Dashboard() {
               Nice — ${spent.toFixed(0)} across {trackedCount} tools on this device.
             </p>
             <p className="mt-1 text-sm text-bone-muted">
-              Free magic-link sign-in backs up spend, budget, and custom tools so a browser clear doesn’t wipe them.
+              Sign in free to back up those {FREE_TOOL_LIMIT} tools. To run a full
+              stack (outlook, budget, unlimited tools), you&apos;ll want{" "}
+              {FOUNDING_PLAN_LABEL}.
             </p>
             <button
               type="button"
@@ -1885,29 +2142,31 @@ export default function Dashboard() {
           </div>
         )}
 
-        {trackedCount >= 2 && isLoggedIn && !isFounding && (
+        {trackedCount >= 2 && !isFounding && (
           <div className="mt-6 rounded-[24px] border border-clay/35 bg-clay/10 px-5 py-4 md:px-6">
             <p className="font-serif text-lg text-bone">
-              You&apos;re relying on ToRay — lock the founding price?
+              {trackedCount >= FREE_TOOL_LIMIT
+                ? "To run your full stack, you need ToRay Pro"
+                : "You&apos;re building a real stack — ToRay Pro is next"}
             </p>
             <p className="mt-1 text-sm text-bone-muted">
-              Your dashboard is backed up. Founding Member keeps $12/mo locked and funds Gemini/Grok Vision scanning next. Still optional.
+              Free stops at {FREE_TOOL_LIMIT} tools and hides outlook, budget, CSV,
+              and Gemini/Grok Vision. {FOUNDING_PLAN_LABEL} at $12/mo unlocks the
+              rest.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <a
                 href={stripeHref}
-                target="_blank"
-                rel="noopener noreferrer"
                 className="rounded-full bg-sage px-4 py-2 text-sm font-medium text-bone transition hover:bg-sage-glow"
               >
-                Become Founding Member — $12/mo
+                {FOUNDING_CTA_LABEL}
               </a>
               <button
                 type="button"
                 onClick={exportCsv}
                 className="rounded-full border border-hairline px-4 py-2 text-sm text-bone-muted transition hover:text-bone"
               >
-                Or export CSV free
+                Export CSV (Pro)
               </button>
             </div>
           </div>
@@ -1948,7 +2207,9 @@ export default function Dashboard() {
               </div>
             </div>
             <p className="mt-2 text-[12px] text-bone-muted">
-              Tracked tools stay on top. Hide the rest — or add any name you pay for.
+              {isFounding
+                ? "Tracked tools stay on top. Hide the rest — or add any name you pay for."
+                : `Free tracks ${FREE_TOOL_LIMIT} tools. Add more with ${FOUNDING_PLAN_LABEL}.`}
             </p>
 
             {!hasSpend && (
@@ -2042,7 +2303,10 @@ export default function Dashboard() {
                             <PencilLine className="h-3 w-3" />
                             {service.isUsageBased &&
                             (service.name === "OpenAI API" ||
-                              service.name === "Anthropic API")
+                              service.name === "Anthropic API" ||
+                              ((service.name === "Gemini API" ||
+                                service.name === "Grok") &&
+                                isFounding))
                               ? "Scan or edit"
                               : "Set amount"}
                           </p>
@@ -2073,16 +2337,18 @@ export default function Dashboard() {
             <div className="rounded-[28px] border border-hairline bg-surface p-6">
               <Eyebrow>Your data</Eyebrow>
               <p className="mt-3 text-sm leading-relaxed text-bone-muted">
-                Export a CSV of tools, outlook, and update history anytime — free.
+                {isFounding
+                  ? "Export tools, outlook, and update history anytime."
+                  : `CSV export is included with ${FOUNDING_PLAN_LABEL} — $12/mo.`}
               </p>
               <button
                 type="button"
                 onClick={exportCsv}
-                disabled={!hasSpend}
+                disabled={!hasSpend && isFounding}
                 className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full border border-hairline px-4 py-2.5 text-sm font-medium text-bone transition hover:border-sage-soft/40 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Download className="h-4 w-4" />
-                Export CSV
+                {isFounding ? "Export CSV" : "Export CSV — Pro"}
               </button>
             </div>
 
@@ -2092,7 +2358,7 @@ export default function Dashboard() {
             >
               <div className="flex items-center justify-between">
                 <Eyebrow>
-                  {isFounding ? "Founding Member" : "When you’re ready"}
+                  {isFounding ? FOUNDING_PLAN_LABEL : "To run your full stack"}
                 </Eyebrow>
                 <span className="rounded-full bg-mint/15 px-2.5 py-1 text-[11px] font-medium text-mint">
                   {isFounding ? "Active" : "$12/mo"}
@@ -2100,9 +2366,14 @@ export default function Dashboard() {
               </div>
               <p className="mt-3 text-[14px] leading-relaxed text-bone-muted">
                 {isFounding
-                  ? "Thank you — your founding price stays locked. Custom tools, budget, and totals stay backed up with your account."
-                  : "Track any stack for free, including custom tools. Founding Member is for people who already rely on ToRay: locked $12/mo and funding for Gemini/Grok Vision next."}
+                  ? "Thank you — ToRay Pro is active. Unlimited tools, Gemini/Grok Vision, outlook, budget, and CSV are unlocked."
+                  : `Free gets you started (OpenAI/Anthropic Vision, ${FREE_TOOL_LIMIT} tools, Magic Link backup). Serious stacks need ${FOUNDING_PLAN_LABEL} at $12/mo.`}
               </p>
+              {foundingVerifyMessage && (
+                <p className="mt-3 rounded-2xl border border-mint/30 bg-mint/10 px-3 py-2 text-[13px] text-mint">
+                  {foundingVerifyMessage}
+                </p>
+              )}
               <ul className="mt-5 space-y-3">
                 {PRO_FEATURES.map(({ icon: Icon, text }) => (
                   <li key={text} className="flex items-start gap-3">
@@ -2118,17 +2389,15 @@ export default function Dashboard() {
                 {!isFounding && (
                   <a
                     href={stripeHref}
-                    target="_blank"
-                    rel="noopener noreferrer"
                     className="flex w-full items-center justify-center rounded-full bg-sage px-6 py-3 text-sm font-semibold text-bone transition hover:bg-sage-glow"
                   >
-                    Become a Founding Member — $12/mo
+                    {FOUNDING_CTA_LABEL}
                   </a>
                 )}
                 <p className="text-center text-[11px] text-bone-muted">
                   {isFounding
-                    ? "You’re supporting multi-provider Vision next."
-                    : "Secure checkout via Stripe · cancel anytime"}
+                    ? "Verified via Stripe · full stack unlocked"
+                    : "Secure checkout via Stripe · same email as Magic Link"}
                 </p>
                 {!isLoggedIn && (
                   <button
@@ -2139,13 +2408,37 @@ export default function Dashboard() {
                     Sign in free to back up first
                   </button>
                 )}
-                {!isFounding && (
+                {!isFounding && isLoggedIn && (
                   <button
                     type="button"
-                    onClick={() => persistPrefs({ isFounding: true })}
+                    onClick={() => {
+                      void (async () => {
+                        try {
+                          const response = await fetch("/api/founding/status");
+                          const result = (await response.json()) as {
+                            isFounding?: boolean;
+                          };
+                          if (result.isFounding) {
+                            setIsFounding(true);
+                            writeFounding(true);
+                            setFoundingVerifyMessage(
+                              "ToRay Pro verified for this account.",
+                            );
+                          } else {
+                            setFoundingVerifyMessage(
+                              "No verified checkout for this email yet. Complete Stripe with the same address, or wait a moment and refresh.",
+                            );
+                          }
+                        } catch {
+                          setFoundingVerifyMessage(
+                            "Could not check Pro status. Try again in a moment.",
+                          );
+                        }
+                      })();
+                    }}
                     className="w-full text-center text-[11px] text-bone-muted underline-offset-2 hover:text-bone hover:underline"
                   >
-                    Already checked out? Mark Founding Member here
+                    Already checked out? Refresh Pro status
                   </button>
                 )}
               </div>
