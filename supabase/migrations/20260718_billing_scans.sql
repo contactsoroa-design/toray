@@ -4,7 +4,18 @@
 create table if not exists public.billing_scans (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users (id) on delete cascade,
-  service text not null check (service in ('OpenAI API', 'Anthropic API')),
+  service text not null check (
+    service in (
+      'OpenAI API',
+      'Anthropic API',
+      'ChatGPT Plus',
+      'Claude Pro',
+      'Cursor Pro',
+      'Midjourney',
+      'GitHub Copilot',
+      'Perplexity Pro'
+    )
+  ),
   amount_usd numeric(12, 2) not null check (amount_usd >= 0),
   billing_period text,
   scanned_at timestamptz not null default now(),

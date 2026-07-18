@@ -1,6 +1,17 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export type SupportedService = "OpenAI API" | "Anthropic API";
+export const SUPPORTED_SERVICES = [
+  "OpenAI API",
+  "Anthropic API",
+  "ChatGPT Plus",
+  "Claude Pro",
+  "Cursor Pro",
+  "Midjourney",
+  "GitHub Copilot",
+  "Perplexity Pro",
+] as const;
+
+export type SupportedService = (typeof SUPPORTED_SERVICES)[number];
 
 export type BillingScan = {
   id: string;
@@ -14,14 +25,20 @@ export type BillingScan = {
 type BillingScanRow = {
   id: string;
   user_id: string;
-  service: SupportedService;
+  service: string;
   amount_usd: number | string;
   billing_period: string | null;
   scanned_at: string;
   created_at: string;
 };
 
-export function mapDbRowToBillingScan(row: BillingScanRow): BillingScan {
+function isSupportedService(value: string): value is SupportedService {
+  return (SUPPORTED_SERVICES as readonly string[]).includes(value);
+}
+
+export function mapDbRowToBillingScan(row: BillingScanRow): BillingScan | null {
+  if (!isSupportedService(row.service)) return null;
+
   return {
     id: row.id,
     service: row.service,
@@ -39,11 +56,13 @@ export async function fetchUserBillingScans(
     .from("billing_scans")
     .select("id, user_id, service, amount_usd, billing_period, scanned_at, created_at")
     .order("scanned_at", { ascending: false })
-    .limit(25);
+    .limit(50);
 
   if (error || !data) return [];
 
-  return (data as BillingScanRow[]).map(mapDbRowToBillingScan);
+  return (data as BillingScanRow[])
+    .map(mapDbRowToBillingScan)
+    .filter((scan): scan is BillingScan => scan !== null);
 }
 
 export async function insertBillingScan(
@@ -83,7 +102,7 @@ export function mergeBillingScanHistories(
       (a, b) =>
         new Date(b.scannedAt).getTime() - new Date(a.scannedAt).getTime(),
     )
-    .slice(0, 25);
+    .slice(0, 50);
 }
 
 export function deriveDashboardFromHistory(
@@ -94,10 +113,15 @@ export function deriveDashboardFromHistory(
   serviceAmounts: Partial<Record<SupportedService, number>>;
   spent: number;
 } {
+  // History is newest-first: keep the first amount seen per service.
   const serviceAmounts = history.reduce<
     Partial<Record<SupportedService, number>>
   >((amounts, scan) => {
-    if (scan.service && Number.isFinite(scan.amountUsd)) {
+    if (
+      scan.service &&
+      Number.isFinite(scan.amountUsd) &&
+      amounts[scan.service] === undefined
+    ) {
       amounts[scan.service] = scan.amountUsd;
     }
     return amounts;

@@ -16,24 +16,27 @@ import {
   fetchUserBillingScans,
   insertBillingScan,
   mergeBillingScanHistories,
+  SUPPORTED_SERVICES,
   type BillingScan,
   type SupportedService,
 } from "@/lib/billing-scans";
 import { createClient } from "@/lib/supabase/client";
 
 const BUDGET = 200;
-const INITIAL_SPENT = 142.5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
 const PACE = 1.32;
 const IDLE_WASTE = 10.0;
 const SCAN_HISTORY_KEY = "toray-billing-scans";
+const STRIPE_URL =
+  process.env.NEXT_PUBLIC_STRIPE_PAYMENT_LINK ??
+  "https://buy.stripe.com/test_bJe9AV3umdUgd9bb4HfrW00";
 
 type ServiceStatus = "active" | "warning" | "paused";
 type ScanStatus = "idle" | "scanning" | "success" | "error";
 
 type Service = {
-  name: string;
+  name: SupportedService;
   type: string;
   amount: number;
   isUsageBased: boolean;
@@ -48,7 +51,7 @@ const services: Service[] = [
     type: "Usage-based",
     amount: 68.2,
     isUsageBased: true,
-    renewal: "Resets Aug 1",
+    renewal: "Scan screenshot or edit",
     status: "warning",
     accent: "bg-clay/20 text-clay",
   },
@@ -57,7 +60,7 @@ const services: Service[] = [
     type: "Usage-based",
     amount: 24.3,
     isUsageBased: true,
-    renewal: "Resets Aug 1",
+    renewal: "Scan screenshot or edit",
     status: "active",
     accent: "bg-blush/20 text-blush",
   },
@@ -66,16 +69,34 @@ const services: Service[] = [
     type: "Subscription",
     amount: 20.0,
     isUsageBased: false,
-    renewal: "Renews Jul 17",
+    renewal: "Typical plan · $20/mo",
     status: "active",
     accent: "bg-mint/20 text-mint",
+  },
+  {
+    name: "Claude Pro",
+    type: "Subscription",
+    amount: 20.0,
+    isUsageBased: false,
+    renewal: "Typical plan · $20/mo",
+    status: "active",
+    accent: "bg-blush/20 text-blush",
+  },
+  {
+    name: "Cursor Pro",
+    type: "Subscription",
+    amount: 20.0,
+    isUsageBased: false,
+    renewal: "Typical plan · $20/mo",
+    status: "active",
+    accent: "bg-sage/25 text-sage-soft",
   },
   {
     name: "Midjourney",
     type: "Subscription",
     amount: 30.0,
     isUsageBased: false,
-    renewal: "Renews Jul 22",
+    renewal: "Typical plan · $30/mo",
     status: "active",
     accent: "bg-moss/25 text-sage-soft",
   },
@@ -84,11 +105,41 @@ const services: Service[] = [
     type: "Subscription",
     amount: 10.0,
     isUsageBased: false,
-    renewal: "Renews Jul 28",
+    renewal: "Typical plan · $10/mo",
     status: "paused",
     accent: "bg-bone/10 text-bone-muted",
   },
+  {
+    name: "Perplexity Pro",
+    type: "Subscription",
+    amount: 20.0,
+    isUsageBased: false,
+    renewal: "Typical plan · $20/mo",
+    status: "active",
+    accent: "bg-clay/15 text-clay",
+  },
 ];
+
+const INITIAL_SPENT = services.reduce((sum, service) => sum + service.amount, 0);
+
+function StripeCheckoutLink({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <a
+      href={STRIPE_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={className}
+    >
+      {children}
+    </a>
+  );
+}
 
 const statusConfig: Record<ServiceStatus, { label: string; chip: string }> = {
   active: { label: "Active", chip: "bg-mint/15 text-mint" },
@@ -464,8 +515,11 @@ function ManualCorrectionModal({
               }
               className="rounded-xl border border-hairline bg-background px-3 py-2.5 text-bone outline-none transition focus:border-sage-soft/60 focus:ring-2 focus:ring-sage/20"
             >
-              <option value="OpenAI API">OpenAI API</option>
-              <option value="Anthropic API">Anthropic API</option>
+              {SUPPORTED_SERVICES.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
             </select>
           </label>
 
@@ -902,10 +956,13 @@ export default function Dashboard() {
                 />
               </div>
             )}
+            <StripeCheckoutLink className="hidden rounded-full bg-sage px-4 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow sm:inline-flex">
+              Upgrade — $12/mo
+            </StripeCheckoutLink>
             <button
               type="button"
               onClick={scrollToScanner}
-              className="rounded-full bg-sage px-4 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow md:hidden"
+              className="rounded-full border border-hairline px-4 py-2.5 text-sm font-medium text-bone transition duration-180 hover:border-sage-soft/40 md:hidden"
             >
               Scan now
             </button>
@@ -949,13 +1006,9 @@ export default function Dashboard() {
               >
                 Scan a screenshot
               </button>
-              <button
-                type="button"
-                onClick={scrollToFounding}
-                className="rounded-full border border-hairline px-5 py-2.5 text-sm font-medium text-bone-muted transition duration-180 hover:border-sage-soft/40 hover:text-bone"
-              >
-                Lock in $12/mo Founding price
-              </button>
+              <StripeCheckoutLink className="rounded-full border border-hairline px-5 py-2.5 text-sm font-medium text-bone-muted transition duration-180 hover:border-sage-soft/40 hover:text-bone">
+                Upgrade — $12/mo
+              </StripeCheckoutLink>
             </div>
           </div>
           <p className="hidden text-sm text-bone-muted md:block">
@@ -1022,33 +1075,68 @@ export default function Dashboard() {
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-8 lg:col-span-3">
             <div className="flex items-center justify-between">
               <Eyebrow>Connected services</Eyebrow>
-              <button className="inline-flex items-center gap-1 text-sm text-sage-soft transition hover:text-bone">
+              <button
+                type="button"
+                onClick={() => openManualCorrection("ChatGPT Plus", 20)}
+                className="inline-flex items-center gap-1 text-sm text-sage-soft transition hover:text-bone"
+              >
                 <Plus className="h-3.5 w-3.5" />
                 Add
               </button>
             </div>
+            <p className="mt-2 text-[12px] text-bone-muted">
+              Tap any card to set or correct its monthly spend. OpenAI &amp; Anthropic
+              can also be scanned from a screenshot.
+            </p>
 
-            <ul className="mt-6 space-y-3">
+            <ul className="mt-5 space-y-3">
               {services.map((service) => {
                 const status = statusConfig[service.status];
+                const displayAmount =
+                  serviceAmounts[service.name] ?? service.amount;
                 return (
-                  <li key={service.name} className="flex items-center gap-4 rounded-2xl bg-surface-raised/70 px-4 py-4 transition duration-180 hover:bg-surface-raised">
-                    <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full font-serif text-sm ${service.accent}`}>
-                      {service.name.slice(0, 1)}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate font-medium text-bone">{service.name}</span>
-                        <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${status.chip}`}>{status.label}</span>
+                  <li key={service.name}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openManualCorrection(
+                          service.name,
+                          displayAmount,
+                          service.isUsageBased ? null : "Monthly subscription",
+                        )
+                      }
+                      className="flex w-full items-center gap-4 rounded-2xl bg-surface-raised/70 px-4 py-4 text-left transition duration-180 hover:bg-surface-raised hover:ring-1 hover:ring-sage-soft/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-sage/40"
+                    >
+                      <div
+                        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full font-serif text-sm ${service.accent}`}
+                      >
+                        {service.name.slice(0, 1)}
                       </div>
-                      <p className="mt-1 text-[13px] text-bone-muted">{service.type} · {service.renewal}</p>
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <p className="font-medium tabular-nums text-bone">
-                        ${(serviceAmounts[service.name as SupportedService] ?? service.amount).toFixed(2)}
-                      </p>
-                      <p className="text-[11px] text-bone-muted">{service.isUsageBased ? "This month" : "Monthly"}</p>
-                    </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="truncate font-medium text-bone">
+                            {service.name}
+                          </span>
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${status.chip}`}
+                          >
+                            {status.label}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[13px] text-bone-muted">
+                          {service.type} · {service.renewal}
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="font-medium tabular-nums text-bone">
+                          ${displayAmount.toFixed(2)}
+                        </p>
+                        <p className="inline-flex items-center gap-1 text-[11px] text-sage-soft">
+                          <PencilLine className="h-3 w-3" />
+                          {service.isUsageBased ? "Edit / scan" : "Set amount"}
+                        </p>
+                      </div>
+                    </button>
                   </li>
                 );
               })}
@@ -1150,16 +1238,16 @@ export default function Dashboard() {
               <div className="flex items-center justify-between">
                 <Eyebrow>Founding Member</Eyebrow>
                 <span className="rounded-full bg-mint/15 px-2.5 py-1 text-[11px] font-medium text-mint">
-                  $12/mo locked in
+                  $12/mo
                 </span>
               </div>
               <div className="mt-4 flex items-baseline gap-2">
                 <span className="font-serif text-4xl tracking-[-0.02em] text-bone">$12</span>
-                <span className="text-sm text-bone-muted">/mo · get your free account today</span>
+                <span className="text-sm text-bone-muted">/mo · unlimited smart scanning</span>
               </div>
               <p className="mt-3 text-[13px] leading-relaxed text-bone-muted">
-                Scanner is free to use now. Secure unlimited smart scanning at
-                the Founding Member price when we exit private beta.
+                Screenshot scans for OpenAI &amp; Anthropic, plus fixed costs for
+                ChatGPT, Cursor, Midjourney, and more — all in one dashboard.
               </p>
               <ul className="mt-6 space-y-3">
                 {PRO_FEATURES.map(({ icon: Icon, text }) => (
@@ -1172,7 +1260,17 @@ export default function Dashboard() {
                   </li>
                 ))}
               </ul>
-              <div className="mt-7">
+              <div className="mt-7 space-y-3">
+                <StripeCheckoutLink className="flex w-full items-center justify-center rounded-full bg-sage px-6 py-3 text-sm font-semibold text-bone transition duration-180 hover:bg-sage-glow">
+                  Upgrade — $12/mo
+                </StripeCheckoutLink>
+                <p className="text-center text-[11px] text-bone-muted">
+                  Secure checkout via Stripe
+                </p>
+                <div className="relative py-1 text-center text-[11px] uppercase tracking-wider text-bone-muted/70">
+                  <span className="bg-surface px-2 relative z-10">or free magic link</span>
+                  <span className="absolute inset-x-0 top-1/2 h-px bg-hairline" />
+                </div>
                 <WaitlistForm
                   email={waitlistEmail}
                   onEmailChange={setWaitlistEmail}
@@ -1188,9 +1286,6 @@ export default function Dashboard() {
                   <p className="mt-2 text-center text-sm text-warning">{waitlistError}</p>
                 )}
               </div>
-              <p className="mt-3 text-center text-[12px] text-bone-muted">
-                Free today. No payment required to start scanning.
-              </p>
             </div>
           </div>
         </section>
