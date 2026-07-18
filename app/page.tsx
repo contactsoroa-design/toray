@@ -6,6 +6,7 @@ import {
   Download,
   EyeOff,
   LogOut,
+  MessageSquareText,
   PencilLine,
   Plus,
   Radar,
@@ -14,6 +15,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { FeedbackModal } from "@/components/FeedbackModal";
+import type { FeedbackContext } from "@/lib/feedback";
 import {
   applyHistoryToDashboard,
   deleteBillingScansForService,
@@ -951,6 +954,8 @@ export default function Dashboard() {
     string | null
   >(null);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [feedbackContext, setFeedbackContext] =
+    useState<FeedbackContext | null>(null);
   const cloudHydratedForRef = useRef<string | null>(null);
   const clearingDeviceOnSignOutRef = useRef(false);
 
@@ -1430,6 +1435,10 @@ export default function Dashboard() {
 
   function openSignIn() {
     setIsSignInOpen(true);
+  }
+
+  function openFeedback(context: FeedbackContext) {
+    setFeedbackContext(context);
   }
 
   function resetDeviceDashboard() {
@@ -1985,6 +1994,15 @@ export default function Dashboard() {
                 Sign in
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => openFeedback("header")}
+              className="inline-flex items-center gap-1.5 rounded-full border border-hairline px-3 py-2 text-sm text-bone-muted transition hover:text-bone"
+              aria-label="Send feedback"
+            >
+              <MessageSquareText className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Feedback</span>
+            </button>
             {!isFounding && (
               <a
                 href={stripeHref}
@@ -2029,6 +2047,17 @@ export default function Dashboard() {
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                {authNotice?.toLowerCase().includes("sign-in") ||
+                authNotice?.toLowerCase().includes("magic link") ||
+                authNotice?.toLowerCase().includes("expired") ? (
+                  <button
+                    type="button"
+                    onClick={() => openFeedback("sign_in")}
+                    className="rounded-full border border-hairline px-3 py-1.5 text-[12px] text-sage-soft transition hover:text-bone"
+                  >
+                    Report sign-in issue
+                  </button>
+                ) : null}
                 {isLoggedIn && !isFounding && (
                   <a
                     href={stripeHref}
@@ -2165,6 +2194,16 @@ export default function Dashboard() {
                   <PencilLine className="h-3.5 w-3.5" />
                   {scanStatus === "success" ? "Correct amount" : "Enter manually"}
                 </button>
+                {scanStatus === "error" && (
+                  <button
+                    type="button"
+                    onClick={() => openFeedback("scan_error")}
+                    className="inline-flex items-center gap-1 text-[13px] text-bone-muted underline-offset-4 transition hover:text-bone hover:underline"
+                  >
+                    <MessageSquareText className="h-3.5 w-3.5" />
+                    Tell us what failed
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -2359,6 +2398,14 @@ export default function Dashboard() {
                       >
                         Unlimited with {FOUNDING_PLAN_LABEL}
                       </a>
+                      {" · "}
+                      <button
+                        type="button"
+                        onClick={() => openFeedback("budget_cap")}
+                        className="text-bone-muted underline-offset-2 hover:text-bone hover:underline"
+                      >
+                        Tell us why
+                      </button>
                     </p>
                   )}
                   {isOverBudget && (
@@ -2413,6 +2460,15 @@ export default function Dashboard() {
                     ? `${FREE_TOOL_LIMIT - trackedCount} free slot${FREE_TOOL_LIMIT - trackedCount === 1 ? "" : "s"} left. Full stacks need ToRay Pro.`
                     : "Hide presets you don’t use so this stays your dashboard."}
             </p>
+            {!isFounding && trackedCount >= FREE_TOOL_LIMIT && (
+              <button
+                type="button"
+                onClick={() => openFeedback("tool_limit")}
+                className="mt-3 text-[12px] text-sage-soft underline-offset-2 hover:text-bone hover:underline"
+              >
+                Which tool did you need next?
+              </button>
+            )}
           </div>
 
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-7">
@@ -2441,12 +2497,21 @@ export default function Dashboard() {
                   : `$${fixedTracked.toFixed(0)} fixed + usage paced from $${usageTracked.toFixed(0)} so far.`}
             </p>
             {!showFullOutlook && (
-              <a
-                href={stripeHref}
-                className="mt-3 inline-flex text-[12px] text-sage-soft underline-offset-2 hover:text-bone hover:underline"
-              >
-                Unlock outlook — ToRay Pro · $12/mo
-              </a>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <a
+                  href={stripeHref}
+                  className="inline-flex text-[12px] text-sage-soft underline-offset-2 hover:text-bone hover:underline"
+                >
+                  Unlock outlook — ToRay Pro · $12/mo
+                </a>
+                <button
+                  type="button"
+                  onClick={() => openFeedback("outlook")}
+                  className="inline-flex text-[12px] text-bone-muted underline-offset-2 hover:text-bone hover:underline"
+                >
+                  What should outlook show?
+                </button>
+              </div>
             )}
           </div>
         </section>
@@ -2584,6 +2649,21 @@ export default function Dashboard() {
                 className="rounded-full border border-hairline px-4 py-2 text-sm text-bone-muted transition hover:text-bone"
               >
                 Export CSV (Pro)
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  openFeedback(
+                    trackedCount >= FREE_TOOL_LIMIT
+                      ? "tool_limit"
+                      : "founding_cta",
+                  )
+                }
+                className="rounded-full border border-hairline px-4 py-2 text-sm text-bone-muted transition hover:text-bone"
+              >
+                {trackedCount >= FREE_TOOL_LIMIT
+                  ? "What’s blocking you?"
+                  : "What would make Pro worth it?"}
               </button>
             </div>
           </div>
@@ -2811,6 +2891,15 @@ export default function Dashboard() {
                     {FOUNDING_CTA_LABEL}
                   </a>
                 )}
+                {!isFounding && (
+                  <button
+                    type="button"
+                    onClick={() => openFeedback("founding_cta")}
+                    className="flex w-full items-center justify-center rounded-full border border-hairline px-6 py-3 text-sm font-medium text-bone-muted transition hover:border-sage-soft/40 hover:text-bone"
+                  >
+                    Tell us what would make Pro worth it
+                  </button>
+                )}
                 <p className="text-center text-[11px] text-bone-muted">
                   {isFounding
                     ? "Verified via Stripe · full stack unlocked"
@@ -2865,9 +2954,19 @@ export default function Dashboard() {
       </main>
 
       <footer className="relative z-10 border-t border-hairline">
-        <div className="mx-auto flex h-16 max-w-6xl flex-col items-start justify-center gap-1 px-6 text-[12px] text-bone-muted sm:flex-row sm:items-center sm:justify-between">
+        <div className="mx-auto flex h-16 max-w-6xl flex-col items-start justify-center gap-2 px-6 text-[12px] text-bone-muted sm:flex-row sm:items-center sm:justify-between">
           <span>© 2026 ToRay</span>
-          <span>Screenshots aren&apos;t stored. Totals stay local until you sign in.</span>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span>Screenshots aren&apos;t stored. Totals stay local until you sign in.</span>
+            <button
+              type="button"
+              onClick={() => openFeedback("footer")}
+              className="inline-flex items-center gap-1 text-sage-soft transition hover:text-bone"
+            >
+              <MessageSquareText className="h-3 w-3" />
+              Feedback
+            </button>
+          </div>
         </div>
       </footer>
 
@@ -2928,6 +3027,15 @@ export default function Dashboard() {
           onSubmit={handleWaitlistSubmit}
           error={waitlistError}
           onClose={() => setIsSignInOpen(false)}
+        />
+      )}
+
+      {feedbackContext && (
+        <FeedbackModal
+          context={feedbackContext}
+          isLoggedIn={isLoggedIn}
+          defaultEmail={userEmail}
+          onClose={() => setFeedbackContext(null)}
         />
       )}
     </div>
