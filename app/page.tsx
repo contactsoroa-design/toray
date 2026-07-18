@@ -30,7 +30,7 @@ const IDLE_WASTE = 10.0;
 const SCAN_HISTORY_KEY = "toray-billing-scans";
 const STRIPE_URL =
   process.env.NEXT_PUBLIC_STRIPE_PAYMENT_LINK ??
-  "https://buy.stripe.com/test_bJe9AV3umdUgd9bb4HfrW00";
+  "https://buy.stripe.com/6oU14m0Lu92V2dL0dx9sk00";
 
 type ServiceStatus = "active" | "warning" | "paused";
 type ScanStatus = "idle" | "scanning" | "success" | "error";
