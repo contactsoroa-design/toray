@@ -9,7 +9,6 @@ import {
   RefreshCw,
   Radar,
   ScanLine,
-  Star,
   X,
 } from "lucide-react";
 
@@ -105,10 +104,10 @@ const SCAN_STEPS = [
 ];
 
 const PRO_FEATURES = [
-  { icon: RefreshCw, text: "Daily auto-sync from OpenAI, Anthropic + 12 more" },
-  { icon: BellRing, text: "Overspend alerts before your card finds out" },
-  { icon: Radar, text: "Idle-spend finder — members save $38/mo on average" },
-  { icon: ScanLine, text: "Unlimited screenshot scans" },
+  { icon: ScanLine, text: "Instant OpenAI & Anthropic billing screenshot scans" },
+  { icon: Radar, text: "One dashboard for AI burn across providers" },
+  { icon: BellRing, text: "End-of-month projection before your card surprises you" },
+  { icon: RefreshCw, text: "Unlimited smart scanning on the Founding plan" },
 ];
 
 function easeOutCubic(t: number) {
@@ -151,7 +150,7 @@ function isValidEmail(value: string) {
 
 function WaitlistSuccess({
   compact = false,
-  message = "We will notify you as soon as we officially launch.",
+  message = "You're in. Check your inbox for your free account link.",
 }: {
   compact?: boolean;
   message?: string;
@@ -186,8 +185,8 @@ function WaitlistForm({
   onSubmit,
   variant = "default",
   id,
-  submitLabel = "Join the Waitlist",
-  submittingLabel = "Joining…",
+  submitLabel = "Get free account",
+  submittingLabel = "Saving…",
   successMessage,
 }: {
   email: string;
@@ -195,7 +194,7 @@ function WaitlistForm({
   submitted: boolean;
   isSubmitting: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
-  variant?: "default" | "compact" | "indigo" | "mobile";
+  variant?: "default" | "compact" | "mobile";
   id?: string;
   submitLabel?: string;
   submittingLabel?: string;
@@ -211,20 +210,16 @@ function WaitlistForm({
   }
 
   const inputClass =
-    variant === "indigo"
-      ? "w-full rounded-full border border-indigo-500/30 bg-slate-900/60 px-4 py-3 text-sm text-bone placeholder:text-bone-muted/60 outline-none transition focus:border-indigo-400/60 focus:ring-2 focus:ring-indigo-500/20"
-      : variant === "mobile"
-        ? "w-full rounded-full border border-clay/35 bg-background/70 px-4 py-3.5 text-base text-bone placeholder:text-bone-muted/60 outline-none transition focus:border-clay focus:ring-2 focus:ring-clay/25"
-        : "w-full rounded-full border border-hairline bg-background/60 px-4 py-3 text-sm text-bone placeholder:text-bone-muted/60 outline-none transition focus:border-sage-soft/60 focus:ring-2 focus:ring-sage/20";
+    variant === "mobile"
+      ? "w-full rounded-full border border-clay/35 bg-background/70 px-4 py-3.5 text-base text-bone placeholder:text-bone-muted/60 outline-none transition focus:border-clay focus:ring-2 focus:ring-clay/25"
+      : "w-full rounded-full border border-hairline bg-background/60 px-4 py-3 text-sm text-bone placeholder:text-bone-muted/60 outline-none transition focus:border-sage-soft/60 focus:ring-2 focus:ring-sage/20";
 
   const buttonClass =
-    variant === "indigo"
-      ? "shrink-0 rounded-full bg-indigo-600 px-6 py-3 text-sm font-medium text-white transition duration-180 hover:bg-indigo-500"
-      : variant === "mobile"
-        ? "w-full shrink-0 rounded-full bg-clay px-6 py-3.5 text-base font-semibold text-background transition duration-180 hover:bg-clay/90 sm:w-auto"
-        : variant === "compact"
-          ? "shrink-0 rounded-full bg-sage px-4 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow"
-          : "shrink-0 rounded-full bg-sage px-6 py-3 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow";
+    variant === "mobile"
+      ? "w-full shrink-0 rounded-full bg-clay px-6 py-3.5 text-base font-semibold text-background transition duration-180 hover:bg-clay/90 sm:w-auto"
+      : variant === "compact"
+        ? "shrink-0 rounded-full bg-sage px-4 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow"
+        : "shrink-0 rounded-full bg-sage px-6 py-3 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow";
 
   const layoutClass =
     variant === "compact"
@@ -289,13 +284,13 @@ function MobileDesktopBridgeBanner({
                 id="mobile-bridge-heading"
                 className="mt-1.5 font-serif text-[1.35rem] leading-snug tracking-[-0.02em] text-bone sm:text-2xl"
               >
-                No OpenAI/Anthropic screenshot on your phone right now? No
-                problem.
+                No OpenAI/Anthropic screenshot on your device right now?
               </h2>
               <p className="mt-2 text-[14px] leading-relaxed text-bone-muted sm:text-[15px]">
-                Enter your email below to save your $12/mo Founding Member spot.
-                We&apos;ll send you a custom magic link to access ToRay from your
-                desktop later when you are ready to scan.
+                Enter your email below to get your free account and lock in our
+                $12/mo Founding Member price forever. We&apos;ll send a secure
+                magic link to your desktop so you can scan your first bill
+                instantly.
               </p>
             </div>
 
@@ -310,7 +305,7 @@ function MobileDesktopBridgeBanner({
                 variant="mobile"
                 submitLabel="Secure My Spot"
                 submittingLabel="Securing…"
-                successMessage="Spot saved. We'll email a desktop magic link so you can scan when you're at your computer."
+                successMessage="You're in. We'll email a secure desktop link so you can scan your first bill instantly."
               />
               {error && (
                 <p className="mt-2 text-center text-sm text-warning md:text-left">
@@ -376,73 +371,6 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
     <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-sage-soft">
       {children}
     </span>
-  );
-}
-
-function ValidationPhaseBanner({
-  email,
-  onEmailChange,
-  submitted,
-  isSubmitting,
-  onSubmit,
-}: {
-  email: string;
-  onEmailChange: (value: string) => void;
-  submitted: boolean;
-  isSubmitting: boolean;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
-}) {
-  return (
-    <section
-      id="waitlist"
-      aria-labelledby="validation-phase-heading"
-      className="mb-8 rounded-[28px] border border-indigo-500/25 bg-gradient-to-br from-slate-900/90 via-indigo-950/50 to-surface p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] md:p-8"
-    >
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-        <div className="max-w-2xl">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500/15 text-lg">
-              📢
-            </span>
-            <h2
-              id="validation-phase-heading"
-              className="font-serif text-xl tracking-[-0.02em] text-bone md:text-2xl"
-            >
-              Public Validation Phase
-            </h2>
-          </div>
-
-          <p className="mt-4 text-[15px] leading-relaxed text-bone/90">
-            ToRay is in early access. The billing scanner is live for OpenAI and
-            Anthropic usage screenshots while we validate which integrations
-            engineers want next.
-          </p>
-          <p className="mt-3 text-[14px] leading-relaxed text-bone-muted">
-            If you want us to fully build and launch this smart screenshot
-            scanner, join the free waitlist below. Your signup acts as a
-            &ldquo;vote&rdquo; to prioritize this product.
-          </p>
-          <p className="mt-3 text-[14px] leading-relaxed text-bone-muted">
-            Early waitlist members will lock in our $12/month Founding Member
-            price forever upon official launch.
-          </p>
-        </div>
-
-        <div className="w-full shrink-0 lg:max-w-sm">
-          <span className="mb-3 block rounded-full bg-indigo-500/15 px-3 py-1 text-center text-[11px] font-medium uppercase tracking-wider text-indigo-200/90">
-            Free pre-order · No payment required
-          </span>
-          <WaitlistForm
-            email={email}
-            onEmailChange={onEmailChange}
-            submitted={submitted}
-            isSubmitting={isSubmitting}
-            onSubmit={onSubmit}
-            variant="indigo"
-          />
-        </div>
-      </div>
-    </section>
   );
 }
 
@@ -677,7 +605,7 @@ export default function Dashboard() {
 
     const endpoint = process.env.NEXT_PUBLIC_FORMSPREE_ENDPOINT;
     if (!endpoint) {
-      setWaitlistError("Waitlist form is not configured yet. Please try again later.");
+      setWaitlistError("Sign-up is temporarily unavailable. Please try again later.");
       return;
     }
 
@@ -706,8 +634,12 @@ export default function Dashboard() {
     }
   }
 
-  function scrollToWaitlist() {
-    document.getElementById("waitlist")?.scrollIntoView({ behavior: "smooth" });
+  function scrollToFounding() {
+    document.getElementById("founding-member")?.scrollIntoView({ behavior: "smooth" });
+  }
+
+  function scrollToScanner() {
+    document.getElementById("quick-scan")?.scrollIntoView({ behavior: "smooth" });
   }
 
   function saveBillingScan(scan: BillingScan) {
@@ -889,8 +821,12 @@ export default function Dashboard() {
           </div>
 
           <div className="flex min-w-0 flex-1 items-center justify-end gap-4">
-            <span className="hidden text-sm text-bone-muted lg:block">
-              Live scanner · OpenAI Vision
+            <span className="hidden items-center gap-2 text-sm text-bone-muted lg:inline-flex">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-mint opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-mint" />
+              </span>
+              LIVE · Free Instant Scanner
             </span>
             <div className="hidden max-w-xs md:block">
               <WaitlistForm
@@ -900,14 +836,16 @@ export default function Dashboard() {
                 isSubmitting={isWaitlistSubmitting}
                 onSubmit={handleWaitlistSubmit}
                 variant="compact"
+                submitLabel="Get free account"
+                submittingLabel="Saving…"
               />
             </div>
             <button
               type="button"
-              onClick={scrollToWaitlist}
+              onClick={scrollToScanner}
               className="rounded-full bg-sage px-4 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow md:hidden"
             >
-              Join Waitlist
+              Scan now
             </button>
           </div>
         </div>
@@ -923,44 +861,45 @@ export default function Dashboard() {
       />
 
       <main className="relative z-10 mx-auto max-w-6xl px-6 pb-24">
-        <div className="flex items-end justify-between py-12 md:py-14">
+        <div className="flex items-end justify-between py-10 md:py-12">
           <div>
-            <Eyebrow>July 2026 — Live overview</Eyebrow>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-mint/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-mint">
+                <span className="h-1.5 w-1.5 rounded-full bg-mint" />
+                Live
+              </span>
+              <Eyebrow>Free Instant Scanner</Eyebrow>
+            </div>
             <h1 className="mt-3 font-serif text-4xl font-medium tracking-[-0.02em] text-bone md:text-5xl">
               Know your AI burn
               <br className="hidden md:block" /> before your card does.
             </h1>
-            <p className="mt-4 max-w-md text-[15px] leading-relaxed text-bone-muted">
-              Every API and AI subscription on one calm dashboard — with an
-              end-of-month projection, so overspend never surprises you again.
+            <p className="mt-4 max-w-lg text-[15px] leading-relaxed text-bone-muted">
+              Drag &amp; drop an OpenAI or Anthropic billing screenshot to scan
+              your spend instantly. No login required — your data never leaves
+              this browser.
             </p>
-            <div className="mt-5 flex items-center gap-3">
-              <span className="flex -space-x-2">
-                {["bg-mint", "bg-clay", "bg-blush", "bg-sage-soft"].map((c) => (
-                  <span key={c} className={`h-6 w-6 rounded-full ${c} ring-2 ring-background`} />
-                ))}
-              </span>
-              <span className="flex items-center gap-1 text-[13px] text-bone-muted">
-                <Star className="h-3.5 w-3.5 fill-clay text-clay" />
-                Join the waitlist — it&apos;s free
-              </span>
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={scrollToScanner}
+                className="rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow"
+              >
+                Scan a screenshot
+              </button>
+              <button
+                type="button"
+                onClick={scrollToFounding}
+                className="rounded-full border border-hairline px-5 py-2.5 text-sm font-medium text-bone-muted transition duration-180 hover:border-sage-soft/40 hover:text-bone"
+              >
+                Lock in $12/mo Founding price
+              </button>
             </div>
           </div>
           <p className="hidden text-sm text-bone-muted md:block">
-            {lastSyncedAt ? `Last synced ${lastSyncedAt}` : "Last synced —"}
+            {lastSyncedAt ? `Last scan ${lastSyncedAt}` : "Ready to scan"}
           </p>
         </div>
-
-        <ValidationPhaseBanner
-          email={waitlistEmail}
-          onEmailChange={setWaitlistEmail}
-          submitted={waitlistSubmitted}
-          isSubmitting={isWaitlistSubmitting}
-          onSubmit={handleWaitlistSubmit}
-        />
-        {waitlistError && (
-          <p className="-mt-4 mb-6 text-center text-sm text-warning">{waitlistError}</p>
-        )}
 
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-7">
@@ -1057,16 +996,16 @@ export default function Dashboard() {
               <p className="text-[13px] text-clay">
                 You could save ${IDLE_WASTE.toFixed(2)}/mo by pausing idle tools
               </p>
-              <button type="button" onClick={scrollToWaitlist} className="shrink-0 text-[13px] font-medium text-clay underline-offset-4 transition hover:underline">
-                Get launch updates →
+              <button type="button" onClick={scrollToScanner} className="shrink-0 text-[13px] font-medium text-clay underline-offset-4 transition hover:underline">
+                Scan another bill →
               </button>
             </div>
           </div>
 
           <div className="space-y-6 lg:col-span-2">
-            <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-8">
+            <div id="quick-scan" className="rounded-[28px] border border-hairline bg-surface p-6 md:p-8">
               <div className="flex items-center justify-between">
-                <Eyebrow>Quick scan</Eyebrow>
+                <Eyebrow>Free Instant Scanner</Eyebrow>
                 <span className="text-[12px] text-mint">
                   {scanHistory.length} saved locally
                 </span>
@@ -1098,9 +1037,9 @@ export default function Dashboard() {
                         <ScanLine className={`h-6 w-6 transition-colors ${isDragging ? "text-sage-soft" : "text-sage-soft/70"}`} strokeWidth={1.5} />
                       </div>
                     )}
-                    <h3 className="mt-3 font-serif text-xl text-bone">Scan a billing screenshot</h3>
+                    <h3 className="mt-3 font-serif text-xl text-bone">Drop your billing screenshot</h3>
                     <p className="mt-2 max-w-[280px] text-[13px] leading-relaxed text-bone-muted">
-                      Upload an OpenAI or Anthropic usage screen. It is sent securely to OpenAI Vision for analysis and is not stored by ToRay.
+                      OpenAI or Anthropic usage screens. Analyzed instantly with Vision — never stored by ToRay.
                     </p>
                     <button type="button" onClick={() => fileInputRef.current?.click()} className="mt-6 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition duration-180 hover:bg-sage-glow">
                       Choose file
@@ -1142,15 +1081,24 @@ export default function Dashboard() {
               )}
             </div>
 
-            <div className="rounded-[28px] border border-sage/40 bg-gradient-to-b from-sage/20 to-surface p-6 md:p-8">
+            <div
+              id="founding-member"
+              className="rounded-[28px] border border-sage/40 bg-gradient-to-b from-sage/20 to-surface p-6 md:p-8"
+            >
               <div className="flex items-center justify-between">
-                <Eyebrow>Launch waitlist</Eyebrow>
-                <span className="rounded-full bg-mint/15 px-2.5 py-1 text-[11px] font-medium text-mint">Founding price</span>
+                <Eyebrow>Founding Member</Eyebrow>
+                <span className="rounded-full bg-mint/15 px-2.5 py-1 text-[11px] font-medium text-mint">
+                  $12/mo locked in
+                </span>
               </div>
               <div className="mt-4 flex items-baseline gap-2">
                 <span className="font-serif text-4xl tracking-[-0.02em] text-bone">$12</span>
-                <span className="text-sm text-bone-muted">/mo at launch — free to join now</span>
+                <span className="text-sm text-bone-muted">/mo · get your free account today</span>
               </div>
+              <p className="mt-3 text-[13px] leading-relaxed text-bone-muted">
+                Scanner is free to use now. Secure unlimited smart scanning at
+                the Founding Member price when we exit private beta.
+              </p>
               <ul className="mt-6 space-y-3">
                 {PRO_FEATURES.map(({ icon: Icon, text }) => (
                   <li key={text} className="flex items-start gap-3">
@@ -1170,22 +1118,18 @@ export default function Dashboard() {
                   isSubmitting={isWaitlistSubmitting}
                   onSubmit={handleWaitlistSubmit}
                   variant="default"
+                  submitLabel="Get free account"
+                  submittingLabel="Saving…"
+                  successMessage="You're in. Check your inbox for your free account link."
                 />
+                {waitlistError && (
+                  <p className="mt-2 text-center text-sm text-warning">{waitlistError}</p>
+                )}
               </div>
               <p className="mt-3 text-center text-[12px] text-bone-muted">
-                Free pre-order. No payment until we officially launch.
+                Free today. No payment required to start scanning.
               </p>
             </div>
-
-            <figure className="px-2">
-              <blockquote className="text-[13.5px] leading-relaxed text-bone-muted">
-                &ldquo;This is exactly the dashboard I wish existed before my OpenAI bill doubled.&rdquo;
-              </blockquote>
-              <figcaption className="mt-2 flex items-center gap-2 text-[12px] text-bone-muted/70">
-                <span className="h-5 w-5 rounded-full bg-blush/40" />
-                Alex R. — solo founder, shipping with GPT-4o
-              </figcaption>
-            </figure>
           </div>
         </section>
       </main>
