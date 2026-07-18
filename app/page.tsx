@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import {
   applyHistoryToDashboard,
+  deleteBillingScansForService,
   fetchUserBillingScans,
   insertBillingScan,
   isValidServiceName,
@@ -587,6 +588,8 @@ function ManualCorrectionModal({
   onSave,
   onClear,
   canClear,
+  onDeleteCustom,
+  canDeleteCustom,
   error,
 }: {
   amount: string;
@@ -606,6 +609,8 @@ function ManualCorrectionModal({
   onSave: (event: FormEvent<HTMLFormElement>) => void;
   onClear?: () => void;
   canClear?: boolean;
+  onDeleteCustom?: () => void;
+  canDeleteCustom?: boolean;
   error: string | null;
 }) {
   return (
@@ -764,16 +769,29 @@ function ManualCorrectionModal({
               Save amount
             </button>
           </div>
-          {canClear && onClear && (
-            <button
-              type="button"
-              onClick={onClear}
-              className="inline-flex items-center justify-center gap-1.5 text-[13px] text-warning underline-offset-4 transition hover:underline"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Remove from this month&apos;s total
-            </button>
-          )}
+          {(canClear && onClear) || (canDeleteCustom && onDeleteCustom) ? (
+            <div className="flex flex-col items-center gap-2">
+              {canClear && onClear && (
+                <button
+                  type="button"
+                  onClick={onClear}
+                  className="inline-flex items-center justify-center gap-1.5 text-[13px] text-warning underline-offset-4 transition hover:underline"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Remove from this month&apos;s total
+                </button>
+              )}
+              {canDeleteCustom && onDeleteCustom && (
+                <button
+                  type="button"
+                  onClick={onDeleteCustom}
+                  className="inline-flex items-center justify-center gap-1.5 text-[13px] text-bone-muted underline-offset-4 transition hover:text-warning hover:underline"
+                >
+                  Delete custom tool
+                </button>
+              )}
+            </div>
+          ) : null}
         </div>
         {error && <p className="mt-3 text-sm text-warning">{error}</p>}
       </form>
@@ -826,6 +844,9 @@ export default function Dashboard() {
   const [budgetDraft, setBudgetDraft] = useState("");
   const [customTools, setCustomTools] = useState<CustomToolPref[]>([]);
   const [hiddenTools, setHiddenTools] = useState<string[]>([]);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<
+    "idle" | "syncing" | "synced" | "error"
+  >("idle");
 
   const catalog: ToolDef[] = (() => {
     const base: ToolDef[] = [
@@ -1142,6 +1163,20 @@ export default function Dashboard() {
     setIsEditingBudget(false);
   }
 
+  async function syncScanToCloud(scan: BillingScan) {
+    const supabase = supabaseRef.current;
+    if (!supabase || !isLoggedIn) return;
+
+    setCloudSyncStatus("syncing");
+    try {
+      await insertBillingScan(supabase, scan);
+      setCloudSyncStatus("synced");
+      window.setTimeout(() => setCloudSyncStatus("idle"), 2500);
+    } catch {
+      setCloudSyncStatus("error");
+    }
+  }
+
   function saveBillingScan(scan: BillingScan) {
     const existingAmount = serviceAmounts[scan.service] ?? 0;
 
@@ -1156,11 +1191,7 @@ export default function Dashboard() {
       return next;
     });
     markUpdated();
-
-    const supabase = supabaseRef.current;
-    if (supabase && isLoggedIn) {
-      void insertBillingScan(supabase, scan).catch(() => {});
-    }
+    void syncScanToCloud(scan);
   }
 
   function clearTrackedTool(name: ServiceName) {
@@ -1181,6 +1212,40 @@ export default function Dashboard() {
     markUpdated();
     setScanStatus("success");
     setScanMessage(`${name} removed from this month’s total`);
+    setIsManualCorrectionOpen(false);
+
+    const supabase = supabaseRef.current;
+    if (supabase && isLoggedIn) {
+      setCloudSyncStatus("syncing");
+      void deleteBillingScansForService(supabase, name)
+        .then(() => {
+          setCloudSyncStatus("synced");
+          window.setTimeout(() => setCloudSyncStatus("idle"), 2500);
+        })
+        .catch(() => setCloudSyncStatus("error"));
+    }
+  }
+
+  function deleteCustomTool(name: ServiceName) {
+    const isCustom = customTools.some(
+      (tool) => tool.name.toLowerCase() === name.toLowerCase(),
+    );
+    if (!isCustom) return;
+
+    if (serviceAmounts[name] !== undefined) {
+      clearTrackedTool(name);
+    }
+
+    persistPrefs({
+      customTools: customTools.filter(
+        (tool) => tool.name.toLowerCase() !== name.toLowerCase(),
+      ),
+      hiddenTools: hiddenTools.filter(
+        (item) => item.toLowerCase() !== name.toLowerCase(),
+      ),
+    });
+    setScanStatus("success");
+    setScanMessage(`${name} deleted from your tools`);
     setIsManualCorrectionOpen(false);
   }
 
@@ -1437,7 +1502,16 @@ export default function Dashboard() {
             </span>
             {isLoggedIn ? (
               <div className="flex items-center gap-3">
-                <span className="hidden max-w-[160px] truncate text-sm text-bone-muted sm:block">
+                <span className="hidden text-[12px] text-mint sm:inline">
+                  {cloudSyncStatus === "syncing"
+                    ? "Syncing…"
+                    : cloudSyncStatus === "synced"
+                      ? "Cloud synced"
+                      : cloudSyncStatus === "error"
+                        ? "Sync failed"
+                        : "Cloud on"}
+                </span>
+                <span className="hidden max-w-[140px] truncate text-sm text-bone-muted sm:block">
                   {userEmail}
                 </span>
                 <form action="/auth/signout" method="post">
@@ -1501,11 +1575,15 @@ export default function Dashboard() {
             <div className="flex items-center justify-between gap-3">
               <Eyebrow>Scan now</Eyebrow>
               <span className="text-[12px] text-mint">
-                {scanHistory.length === 0
-                  ? isLoggedIn
-                    ? "No updates yet · cloud ready"
-                    : "No updates yet · this device"
-                  : `${scanHistory.length} update${scanHistory.length === 1 ? "" : "s"}${isLoggedIn ? " · synced" : " · this device"}`}
+                {cloudSyncStatus === "syncing"
+                  ? "Saving to cloud…"
+                  : cloudSyncStatus === "error"
+                    ? "Cloud save failed — kept on this device"
+                    : scanHistory.length === 0
+                      ? isLoggedIn
+                        ? "No updates yet · cloud ready"
+                        : "No updates yet · this device"
+                      : `${scanHistory.length} update${scanHistory.length === 1 ? "" : "s"}${isLoggedIn ? " · cloud" : " · this device"}`}
               </span>
             </div>
 
@@ -1693,24 +1771,61 @@ export default function Dashboard() {
                   )}
                 </form>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setBudgetDraft("");
-                    setIsEditingBudget(true);
-                  }}
-                  className="text-sm text-sage-soft underline-offset-4 transition hover:text-bone hover:underline"
-                >
-                  Set a monthly budget
-                </button>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBudgetDraft("");
+                      setIsEditingBudget(true);
+                    }}
+                    className="text-sm text-sage-soft underline-offset-4 transition hover:text-bone hover:underline"
+                  >
+                    Set a monthly budget
+                  </button>
+                  {hasSpend && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        persistPrefs({
+                          budget: Math.ceil(projected / 10) * 10,
+                        })
+                      }
+                      className="text-[12px] text-bone-muted underline-offset-2 transition hover:text-bone hover:underline"
+                    >
+                      Use outlook (${Math.ceil(projected / 10) * 10})
+                    </button>
+                  )}
+                </div>
               )}
               <p className={`mt-3 text-[13px] ${isOverBudget ? "text-danger" : "text-bone-muted"}`}>
                 {!hasSpend
                   ? "Scan or add a tool to see month-end outlook."
                   : isOverBudget
-                    ? `Outlook $${projected.toFixed(0)} by ${monthEnd} — $${overspend.toFixed(0)} over. Edit budget or hide tools you don’t use.`
+                    ? `Outlook $${projected.toFixed(0)} by ${monthEnd} — $${overspend.toFixed(0)} over.`
                     : `Outlook $${projected.toFixed(0)} by ${monthEnd}`}
               </p>
+              {isOverBudget && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const suggested = Math.ceil(projected / 10) * 10;
+                      persistPrefs({ budget: suggested });
+                      setIsEditingBudget(false);
+                    }}
+                    className="rounded-full border border-hairline px-3 py-1 text-[12px] text-sage-soft transition hover:text-bone"
+                  >
+                    Raise budget to ${Math.ceil(projected / 10) * 10}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={hideAllUnset}
+                    className="rounded-full border border-hairline px-3 py-1 text-[12px] text-bone-muted transition hover:text-bone"
+                  >
+                    Hide unused tools
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1985,8 +2100,8 @@ export default function Dashboard() {
               </div>
               <p className="mt-3 text-[14px] leading-relaxed text-bone-muted">
                 {isFounding
-                  ? "Thank you — your founding price stays locked. Keep tracking freely; sync and export are yours."
-                  : "Everything above stays free. Founding Member is for people who already rely on ToRay and want cloud backup plus a locked $12 price that funds the next Vision providers."}
+                  ? "Thank you — your founding price stays locked. Custom tools, budget, and totals stay backed up with your account."
+                  : "Track any stack for free, including custom tools. Founding Member is for people who already rely on ToRay: locked $12/mo and funding for Gemini/Grok Vision next."}
               </p>
               <ul className="mt-5 space-y-3">
                 {PRO_FEATURES.map(({ icon: Icon, text }) => (
@@ -2073,9 +2188,23 @@ export default function Dashboard() {
           onClose={() => setIsManualCorrectionOpen(false)}
           onSave={saveManualCorrection}
           canClear={
-            !isCustomMode && serviceAmounts[manualService] !== undefined
+            serviceAmounts[
+              isCustomMode ? customName.trim() || manualService : manualService
+            ] !== undefined
           }
-          onClear={() => clearTrackedTool(manualService)}
+          onClear={() =>
+            clearTrackedTool(
+              isCustomMode ? customName.trim() || manualService : manualService,
+            )
+          }
+          canDeleteCustom={
+            !isCustomMode &&
+            customTools.some(
+              (tool) =>
+                tool.name.toLowerCase() === manualService.toLowerCase(),
+            )
+          }
+          onDeleteCustom={() => deleteCustomTool(manualService)}
           error={manualError}
         />
       )}

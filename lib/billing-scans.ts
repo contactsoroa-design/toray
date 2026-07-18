@@ -88,6 +88,13 @@ export async function insertBillingScan(
 
   if (!user) return;
 
+  // Keep one live row per service in the cloud for cleaner sync.
+  await supabase
+    .from("billing_scans")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("service", scan.service);
+
   const { error } = await supabase.from("billing_scans").insert({
     id: scan.id,
     user_id: user.id,
@@ -96,6 +103,25 @@ export async function insertBillingScan(
     billing_period: scan.billingPeriod,
     scanned_at: scan.scannedAt,
   });
+
+  if (error) throw error;
+}
+
+export async function deleteBillingScansForService(
+  supabase: SupabaseClient,
+  service: ServiceName,
+): Promise<void> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) return;
+
+  const { error } = await supabase
+    .from("billing_scans")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("service", service);
 
   if (error) throw error;
 }
