@@ -8,9 +8,12 @@
     "start": "next start",
     "lint": "eslint",
     "test:billing:fixtures": "node scripts/generate-billing-fixtures.mjs",
-    "test:billing": "node scripts/eval-billing-scanner.mjs"
+    "test:billing": "node scripts/eval-billing-scanner.mjs",
+    "verify:supabase": "node scripts/verify-supabase-setup.mjs"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.3",
+    "@supabase/supabase-js": "^2.110.7",
     "lucide-react": "^1.24.0",
     "next": "16.2.10",
     "openai": "^6.46.0",

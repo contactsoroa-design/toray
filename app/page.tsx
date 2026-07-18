@@ -11,6 +11,15 @@ import {
   ScanLine,
   X,
 } from "lucide-react";
+import {
+  applyHistoryToDashboard,
+  fetchUserBillingScans,
+  insertBillingScan,
+  mergeBillingScanHistories,
+  type BillingScan,
+  type SupportedService,
+} from "@/lib/billing-scans";
+import { createClient } from "@/lib/supabase/client";
 
 const BUDGET = 200;
 const INITIAL_SPENT = 142.5;
@@ -22,16 +31,6 @@ const SCAN_HISTORY_KEY = "toray-billing-scans";
 
 type ServiceStatus = "active" | "warning" | "paused";
 type ScanStatus = "idle" | "scanning" | "success" | "error";
-type SupportedService = "OpenAI API" | "Anthropic API";
-
-type BillingScan = {
-  id: string;
-  service: SupportedService;
-  amountUsd: number;
-  billingPeriod: string | null;
-  confidence: "high" | "medium" | "low";
-  scannedAt: string;
-};
 
 type Service = {
   name: string;
@@ -304,8 +303,8 @@ function MobileDesktopBridgeBanner({
                 onSubmit={onSubmit}
                 variant="mobile"
                 submitLabel="Secure My Spot"
-                submittingLabel="Securing…"
-                successMessage="You're in. We'll email a secure desktop link so you can scan your first bill instantly."
+                submittingLabel="Sending link…"
+                successMessage="Check your email for a magic link to your free account."
               />
               {error && (
                 <p className="mt-2 text-center text-sm text-warning md:text-left">
@@ -524,6 +523,7 @@ function ManualCorrectionModal({
 
 export default function Dashboard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
 
   const [isDragging, setIsDragging] = useState(false);
   const [spent, setSpent] = useState(INITIAL_SPENT);
@@ -541,6 +541,8 @@ export default function Dashboard() {
   const [waitlistSubmitted, setWaitlistSubmitted] = useState(false);
   const [isWaitlistSubmitting, setIsWaitlistSubmitting] = useState(false);
   const [waitlistError, setWaitlistError] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isManualCorrectionOpen, setIsManualCorrectionOpen] = useState(false);
   const [manualService, setManualService] =
     useState<SupportedService>("OpenAI API");
@@ -557,35 +559,60 @@ export default function Dashboard() {
   const isScanning = scanStatus === "scanning";
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(SCAN_HISTORY_KEY);
-    if (!stored) return;
+    const supabase = createClient();
+    supabaseRef.current = supabase;
 
-    try {
-      const history = JSON.parse(stored) as BillingScan[];
-      const latestAmounts = history.reduce<
-        Partial<Record<SupportedService, number>>
-      >((amounts, scan) => {
-        if (scan.service && Number.isFinite(scan.amountUsd)) {
-          amounts[scan.service] = scan.amountUsd;
+    async function hydrateDashboard() {
+      let localHistory: BillingScan[] = [];
+      const stored = window.localStorage.getItem(SCAN_HISTORY_KEY);
+
+      if (stored) {
+        try {
+          localHistory = JSON.parse(stored) as BillingScan[];
+        } catch {
+          window.localStorage.removeItem(SCAN_HISTORY_KEY);
         }
-        return amounts;
-      }, {});
+      }
 
-      const updatedSpend = (Object.entries(latestAmounts) as [
-        SupportedService,
-        number,
-      ][]).reduce((total, [serviceName, amount]) => {
-        const defaultAmount =
-          services.find((service) => service.name === serviceName)?.amount ?? 0;
-        return total - defaultAmount + amount;
-      }, INITIAL_SPENT);
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-      setScanHistory(history);
-      setServiceAmounts(latestAmounts);
-      setSpent(updatedSpend);
-    } catch {
-      window.localStorage.removeItem(SCAN_HISTORY_KEY);
+      if (user?.email) {
+        setUserEmail(user.email);
+        setIsLoggedIn(true);
+
+        const remoteHistory = await fetchUserBillingScans(supabase);
+        const merged = mergeBillingScanHistories(localHistory, remoteHistory);
+        const dashboard = applyHistoryToDashboard(
+          merged,
+          INITIAL_SPENT,
+          services,
+        );
+
+        setScanHistory(dashboard.scanHistory);
+        setServiceAmounts(dashboard.serviceAmounts);
+        setSpent(dashboard.spent);
+        window.localStorage.setItem(
+          SCAN_HISTORY_KEY,
+          JSON.stringify(dashboard.scanHistory),
+        );
+        return;
+      }
+
+      if (localHistory.length === 0) return;
+
+      const dashboard = applyHistoryToDashboard(
+        localHistory,
+        INITIAL_SPENT,
+        services,
+      );
+      setScanHistory(dashboard.scanHistory);
+      setServiceAmounts(dashboard.serviceAmounts);
+      setSpent(dashboard.spent);
     }
+
+    void hydrateDashboard();
   }, []);
 
   useEffect(() => {
@@ -603,8 +630,10 @@ export default function Dashboard() {
       return;
     }
 
-    const endpoint = process.env.NEXT_PUBLIC_FORMSPREE_ENDPOINT;
-    if (!endpoint) {
+    if (
+      !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+      !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    ) {
       setWaitlistError("Sign-up is temporarily unavailable. Please try again later.");
       return;
     }
@@ -613,22 +642,33 @@ export default function Dashboard() {
     setIsWaitlistSubmitting(true);
 
     try {
-      const formData = new FormData();
-      formData.append("email", trimmed);
+      const supabase = supabaseRef.current ?? createClient();
+      supabaseRef.current = supabase;
+      const redirectTo = `${process.env.NEXT_PUBLIC_SITE_URL || window.location.origin}/auth/callback`;
 
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { Accept: "application/json" },
-        body: formData,
+      const { error } = await supabase.auth.signInWithOtp({
+        email: trimmed,
+        options: { emailRedirectTo: redirectTo },
       });
 
-      if (!response.ok) {
-        throw new Error("Formspree submission failed");
+      if (error) throw error;
+
+      const formspreeEndpoint = process.env.NEXT_PUBLIC_FORMSPREE_ENDPOINT;
+      if (formspreeEndpoint) {
+        const formData = new FormData();
+        formData.append("email", trimmed);
+        void fetch(formspreeEndpoint, {
+          method: "POST",
+          headers: { Accept: "application/json" },
+          body: formData,
+        }).catch(() => {});
       }
 
       setWaitlistSubmitted(true);
     } catch {
-      setWaitlistError("We could not save your email. Please check your connection and try again.");
+      setWaitlistError(
+        "We could not send your magic link. Please check your connection and try again.",
+      );
     } finally {
       setIsWaitlistSubmitting(false);
     }
@@ -658,6 +698,11 @@ export default function Dashboard() {
       window.localStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(next));
       return next;
     });
+
+    const supabase = supabaseRef.current;
+    if (supabase && isLoggedIn) {
+      void insertBillingScan(supabase, scan).catch(() => {});
+    }
   }
 
   function openManualCorrection(
@@ -828,18 +873,35 @@ export default function Dashboard() {
               </span>
               LIVE · Free Instant Scanner
             </span>
-            <div className="hidden max-w-xs md:block">
-              <WaitlistForm
-                email={waitlistEmail}
-                onEmailChange={setWaitlistEmail}
-                submitted={waitlistSubmitted}
-                isSubmitting={isWaitlistSubmitting}
-                onSubmit={handleWaitlistSubmit}
-                variant="compact"
-                submitLabel="Get free account"
-                submittingLabel="Saving…"
-              />
-            </div>
+            {isLoggedIn ? (
+              <div className="hidden items-center gap-3 md:flex">
+                <span className="max-w-[180px] truncate text-sm text-bone-muted">
+                  {userEmail}
+                </span>
+                <form action="/auth/signout" method="post">
+                  <button
+                    type="submit"
+                    className="rounded-full border border-hairline px-4 py-2.5 text-sm font-medium text-bone-muted transition duration-180 hover:border-sage-soft/40 hover:text-bone"
+                  >
+                    Sign out
+                  </button>
+                </form>
+              </div>
+            ) : (
+              <div className="hidden max-w-xs md:block">
+                <WaitlistForm
+                  email={waitlistEmail}
+                  onEmailChange={setWaitlistEmail}
+                  submitted={waitlistSubmitted}
+                  isSubmitting={isWaitlistSubmitting}
+                  onSubmit={handleWaitlistSubmit}
+                  variant="compact"
+                  submitLabel="Get free account"
+                  submittingLabel="Sending link…"
+                  successMessage="Check your email for a magic link to your free account."
+                />
+              </div>
+            )}
             <button
               type="button"
               onClick={scrollToScanner}
@@ -1007,7 +1069,7 @@ export default function Dashboard() {
               <div className="flex items-center justify-between">
                 <Eyebrow>Free Instant Scanner</Eyebrow>
                 <span className="text-[12px] text-mint">
-                  {scanHistory.length} saved locally
+                  {scanHistory.length} saved{isLoggedIn ? " · synced" : " locally"}
                 </span>
               </div>
 
@@ -1119,8 +1181,8 @@ export default function Dashboard() {
                   onSubmit={handleWaitlistSubmit}
                   variant="default"
                   submitLabel="Get free account"
-                  submittingLabel="Saving…"
-                  successMessage="You're in. Check your inbox for your free account link."
+                  submittingLabel="Sending link…"
+                  successMessage="Check your email for a magic link to your free account."
                 />
                 {waitlistError && (
                   <p className="mt-2 text-center text-sm text-warning">{waitlistError}</p>
