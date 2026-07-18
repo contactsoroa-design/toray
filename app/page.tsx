@@ -2520,202 +2520,101 @@ export default function Dashboard() {
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-7">
             <div className="flex items-center justify-between">
               <Eyebrow>Month-end outlook</Eyebrow>
-              <span className="rounded-full bg-bone/10 px-2.5 py-1 text-[11px] font-medium text-bone-muted">
-                by {monthEnd}
+              <span
+                className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                  showFullOutlook
+                    ? "bg-bone/10 text-bone-muted"
+                    : "bg-sage/20 text-mint"
+                }`}
+              >
+                {showFullOutlook ? `by ${monthEnd}` : "Pro"}
               </span>
             </div>
-            <div className="mt-4 flex items-baseline gap-2">
-              {showFullOutlook ? (
-                <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-bone">
-                  ${hasSpend ? projected.toFixed(0) : "0"}
-                </span>
-              ) : (
-                <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-bone/40 blur-[6px] select-none">
-                  ${hasSpend ? projected.toFixed(0) : "128"}
-                </span>
-              )}
-            </div>
-            <p className="mt-6 text-sm leading-relaxed text-bone-muted">
-              {!showFullOutlook
-                ? foundingUpgradeHint("Month-end outlook")
-                : !hasSpend
-                  ? "Fixed plans stay flat. Usage-based spend is paced to month-end."
-                  : `$${fixedTracked.toFixed(0)} fixed + usage paced from $${usageTracked.toFixed(0)} so far.`}
-            </p>
-            {!showFullOutlook && (
-              <div className="mt-3 flex flex-wrap items-center gap-3">
-                <a
-                  href={stripeHref}
-                  className="inline-flex text-[12px] text-sage-soft underline-offset-2 hover:text-bone hover:underline"
-                >
-                  Unlock outlook — ToRay Pro · $12/mo
-                </a>
-                <button
-                  type="button"
-                  onClick={() => openFeedback("outlook")}
-                  className="inline-flex text-[12px] text-bone-muted underline-offset-2 hover:text-bone hover:underline"
-                >
-                  What should outlook show?
-                </button>
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="mt-4">
-          <div
-            className={`rounded-[28px] border p-6 md:p-7 ${
-              showStackPulse
-                ? "border-sage/35 bg-gradient-to-r from-sage/15 to-surface"
-                : "border-hairline bg-surface"
-            }`}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <Eyebrow>Stack Pulse</Eyebrow>
-              <span className="rounded-full bg-mint/15 px-2.5 py-1 text-[11px] font-medium text-mint">
-                {showStackPulse ? "Pro" : "Pro preview"}
-              </span>
-            </div>
-            {showStackPulse ? (
+            {showFullOutlook ? (
               <>
-                <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
-                  <div>
-                    <p className="text-[12px] text-bone-muted">Daily burn</p>
-                    <p className="mt-1 font-serif text-2xl tabular-nums text-bone">
-                      ${hasSpend ? stackPulse.dailyBurn.toFixed(2) : "0.00"}
-                      <span className="text-sm text-bone-muted"> /day</span>
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[12px] text-bone-muted">Top tool share</p>
-                    <p className="mt-1 font-serif text-2xl tabular-nums text-bone">
-                      {stackPulse.topTool
-                        ? `${stackPulse.topShare}%`
-                        : "—"}
-                    </p>
-                    <p className="mt-0.5 truncate text-[12px] text-bone-muted">
-                      {stackPulse.topTool ?? "Track a tool to see mix"}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[12px] text-bone-muted">Budget pace</p>
-                    <p className="mt-1 font-serif text-2xl tabular-nums text-bone">
-                      {stackPulse.daysUntilBudget != null
-                        ? `Day ${stackPulse.daysUntilBudget}`
-                        : "—"}
-                    </p>
-                    <p className="mt-0.5 text-[12px] text-bone-muted">
-                      {budgetBasis ? "Hit budget at this burn" : "Set a budget"}
-                    </p>
-                  </div>
+                <div className="mt-4 flex items-baseline gap-2">
+                  <span className="font-serif text-4xl tracking-[-0.02em] tabular-nums text-bone">
+                    ${hasSpend ? projected.toFixed(0) : "0"}
+                  </span>
                 </div>
-                <p className="mt-4 text-sm leading-relaxed text-bone-muted">
-                  {stackPulse.paceLabel}
+                <p className="mt-6 text-sm leading-relaxed text-bone-muted">
+                  {!hasSpend
+                    ? "Fixed plans stay flat. Usage-based spend is paced to month-end."
+                    : `$${fixedTracked.toFixed(0)} fixed + usage paced from $${usageTracked.toFixed(0)} so far.`}
                 </p>
               </>
             ) : (
               <>
-                <div className="mt-5 grid grid-cols-1 gap-4 blur-[5px] select-none sm:grid-cols-3">
-                  <div>
-                    <p className="text-[12px] text-bone-muted">Daily burn</p>
-                    <p className="mt-1 font-serif text-2xl tabular-nums text-bone">
-                      $12.40
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[12px] text-bone-muted">Top tool share</p>
-                    <p className="mt-1 font-serif text-2xl tabular-nums text-bone">
-                      48%
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[12px] text-bone-muted">Budget pace</p>
-                    <p className="mt-1 font-serif text-2xl tabular-nums text-bone">
-                      Day 22
-                    </p>
-                  </div>
-                </div>
-                <p className="mt-4 text-sm text-bone-muted">
-                  See which tool is eating the month, your $/day burn, and when
-                  you&apos;ll hit budget — exclusive to {FOUNDING_PLAN_LABEL}.
+                <p className="mt-4 text-sm leading-relaxed text-bone-muted">
+                  Project spend to {monthEnd} — unlocks with ToRay Pro.
                 </p>
-                <a
-                  href={stripeHref}
-                  className="mt-3 inline-flex rounded-full bg-sage px-4 py-2 text-sm font-medium text-bone transition hover:bg-sage-glow"
-                >
-                  Unlock Stack Pulse — $12/mo
-                </a>
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <a
+                    href={stripeHref}
+                    className="inline-flex text-[12px] text-sage-soft underline-offset-2 hover:text-bone hover:underline"
+                  >
+                    Unlock outlook · $12/mo
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => openFeedback("outlook")}
+                    className="inline-flex text-[12px] text-bone-muted underline-offset-2 hover:text-bone hover:underline"
+                  >
+                    What should it show?
+                  </button>
+                </div>
               </>
             )}
           </div>
         </section>
 
-        {trackedCount >= 2 && !isLoggedIn && (
-          <div className="mt-6 rounded-[24px] border border-sage/30 bg-sage/10 px-5 py-4 md:px-6">
-            <p className="font-serif text-lg text-bone">
-              Nice — ${spent.toFixed(0)} across {trackedCount} tools on this device.
-            </p>
-            <p className="mt-1 text-sm text-bone-muted">
-              Sign in free to back up those tools to your email. Same Free
-              limits — Pro (outlook, Stack Pulse, unlimited tools) is a separate
-              upgrade.
-            </p>
-            <button
-              type="button"
-              onClick={openSignIn}
-              className="mt-3 rounded-full bg-sage px-4 py-2 text-sm font-medium text-bone transition hover:bg-sage-glow"
-            >
-              Back up free
-            </button>
-          </div>
-        )}
-
-        {trackedCount >= 2 && !isFounding && (
-          <div className="mt-6 rounded-[24px] border border-clay/35 bg-clay/10 px-5 py-4 md:px-6">
-            <p className="font-serif text-lg text-bone">
-              {trackedCount >= FREE_TOOL_LIMIT
-                ? "To run your full stack, you need ToRay Pro"
-                : "You&apos;re building a real stack — ToRay Pro is next"}
-            </p>
-            <p className="mt-1 text-sm text-bone-muted">
-              Free stops at {FREE_TOOL_LIMIT} tools and ${FREE_BUDGET_CAP} budgets,
-              and hides outlook, Stack Pulse, CSV, and Gemini/Grok Vision.{" "}
-              {FOUNDING_PLAN_LABEL} at $12/mo unlocks the rest.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <a
-                href={stripeHref}
-                className="rounded-full bg-sage px-4 py-2 text-sm font-medium text-bone transition hover:bg-sage-glow"
-              >
-                {FOUNDING_CTA_LABEL}
-              </a>
-              <button
-                type="button"
-                onClick={exportCsv}
-                className="rounded-full border border-hairline px-4 py-2 text-sm text-bone-muted transition hover:text-bone"
-              >
-                Export CSV (Pro)
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  openFeedback(
-                    trackedCount >= FREE_TOOL_LIMIT
-                      ? "tool_limit"
-                      : "founding_cta",
-                  )
-                }
-                className="rounded-full border border-hairline px-4 py-2 text-sm text-bone-muted transition hover:text-bone"
-              >
-                {trackedCount >= FREE_TOOL_LIMIT
-                  ? "What’s blocking you?"
-                  : "What would make Pro worth it?"}
-              </button>
+        {/* Pro: Stack Pulse stays above tools. Free: tools first (see compact Pulse below). */}
+        {showStackPulse && (
+          <section className="mt-4">
+            <div className="rounded-[28px] border border-sage/35 bg-gradient-to-r from-sage/15 to-surface p-6 md:p-7">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Eyebrow>Stack Pulse</Eyebrow>
+                <span className="rounded-full bg-mint/15 px-2.5 py-1 text-[11px] font-medium text-mint">
+                  Pro
+                </span>
+              </div>
+              <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div>
+                  <p className="text-[12px] text-bone-muted">Daily burn</p>
+                  <p className="mt-1 font-serif text-2xl tabular-nums text-bone">
+                    ${hasSpend ? stackPulse.dailyBurn.toFixed(2) : "0.00"}
+                    <span className="text-sm text-bone-muted"> /day</span>
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[12px] text-bone-muted">Top tool share</p>
+                  <p className="mt-1 font-serif text-2xl tabular-nums text-bone">
+                    {stackPulse.topTool ? `${stackPulse.topShare}%` : "—"}
+                  </p>
+                  <p className="mt-0.5 truncate text-[12px] text-bone-muted">
+                    {stackPulse.topTool ?? "Track a tool to see mix"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[12px] text-bone-muted">Budget pace</p>
+                  <p className="mt-1 font-serif text-2xl tabular-nums text-bone">
+                    {stackPulse.daysUntilBudget != null
+                      ? `Day ${stackPulse.daysUntilBudget}`
+                      : "—"}
+                  </p>
+                  <p className="mt-0.5 text-[12px] text-bone-muted">
+                    {budgetBasis ? "Hit budget at this burn" : "Set a budget"}
+                  </p>
+                </div>
+              </div>
+              <p className="mt-4 text-sm leading-relaxed text-bone-muted">
+                {stackPulse.paceLabel}
+              </p>
             </div>
-          </div>
+          </section>
         )}
 
-        <section className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-5">
+        <section className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-5 md:mt-8">
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-8 lg:col-span-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <Eyebrow>Your AI tools</Eyebrow>
@@ -3017,6 +2916,94 @@ export default function Dashboard() {
             </div>
           </div>
         </section>
+
+        {/* Free: compact Pro teasers after tools so the list stays above the fold */}
+        {!showStackPulse && (
+          <section className="mt-6">
+            <div className="flex flex-col gap-3 rounded-[24px] border border-hairline bg-surface px-5 py-4 sm:flex-row sm:items-center sm:justify-between md:px-6">
+              <div>
+                <Eyebrow>Stack Pulse</Eyebrow>
+                <p className="mt-1 text-sm text-bone-muted">
+                  Daily burn, top tool share, and budget pace — with{" "}
+                  {FOUNDING_PLAN_LABEL}.
+                </p>
+              </div>
+              <a
+                href={stripeHref}
+                className="inline-flex shrink-0 items-center justify-center rounded-full bg-sage px-4 py-2 text-sm font-medium text-bone transition hover:bg-sage-glow"
+              >
+                Unlock — $12/mo
+              </a>
+            </div>
+          </section>
+        )}
+
+        {trackedCount >= 2 && !isLoggedIn && (
+          <div className="mt-6 rounded-[24px] border border-sage/30 bg-sage/10 px-5 py-4 md:px-6">
+            <p className="font-serif text-lg text-bone">
+              Nice — ${spent.toFixed(0)} across {trackedCount} tools on this
+              device.
+            </p>
+            <p className="mt-1 text-sm text-bone-muted">
+              Sign in free to back up those tools to your email. Same Free
+              limits — Pro (outlook, Stack Pulse, unlimited tools) is a separate
+              upgrade.
+            </p>
+            <button
+              type="button"
+              onClick={openSignIn}
+              className="mt-3 rounded-full bg-sage px-4 py-2 text-sm font-medium text-bone transition hover:bg-sage-glow"
+            >
+              Back up free
+            </button>
+          </div>
+        )}
+
+        {trackedCount >= 2 && !isFounding && (
+          <div className="mt-6 rounded-[24px] border border-clay/35 bg-clay/10 px-5 py-4 md:px-6">
+            <p className="font-serif text-lg text-bone">
+              {trackedCount >= FREE_TOOL_LIMIT
+                ? "To run your full stack, you need ToRay Pro"
+                : "You&apos;re building a real stack — ToRay Pro is next"}
+            </p>
+            <p className="mt-1 text-sm text-bone-muted">
+              Free stops at {FREE_TOOL_LIMIT} presets and ${FREE_BUDGET_CAP}{" "}
+              budgets, and locks custom tools, outlook, Stack Pulse, CSV, and
+              Gemini/Grok Vision. {FOUNDING_PLAN_LABEL} at $12/mo unlocks the
+              rest.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <a
+                href={stripeHref}
+                className="rounded-full bg-sage px-4 py-2 text-sm font-medium text-bone transition hover:bg-sage-glow"
+              >
+                {FOUNDING_CTA_LABEL}
+              </a>
+              <button
+                type="button"
+                onClick={exportCsv}
+                className="rounded-full border border-hairline px-4 py-2 text-sm text-bone-muted transition hover:text-bone"
+              >
+                Export CSV (Pro)
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  openFeedback(
+                    trackedCount >= FREE_TOOL_LIMIT
+                      ? "tool_limit"
+                      : "founding_cta",
+                  )
+                }
+                className="rounded-full border border-hairline px-4 py-2 text-sm text-bone-muted transition hover:text-bone"
+              >
+                {trackedCount >= FREE_TOOL_LIMIT
+                  ? "What’s blocking you?"
+                  : "What would make Pro worth it?"}
+              </button>
+            </div>
+          </div>
+        )}
       </main>
 
       <footer className="relative z-10 border-t border-hairline">
