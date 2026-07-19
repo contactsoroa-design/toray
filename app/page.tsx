@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import Link from "next/link";
 import {
   Check,
   Download,
@@ -3428,6 +3429,12 @@ export default function Dashboard() {
           <span>© 2026 ToRay</span>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <span>Screenshots aren&apos;t stored. Totals stay local until you sign in.</span>
+            <Link
+              href="/blog"
+              className="text-bone-muted transition hover:text-bone"
+            >
+              Blog
+            </Link>
             <button
               type="button"
               onClick={() => openFeedback("footer")}
