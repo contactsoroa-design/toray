@@ -223,6 +223,10 @@ export function mergeBillingScanHistories(
     .slice(0, 50);
 }
 
+export function normalizeServiceName(service: string): string {
+  return service.trim().replace(/\s+/g, " ");
+}
+
 export function deriveDashboardFromHistory(
   history: BillingScan[],
   initialSpent: number,
@@ -233,12 +237,13 @@ export function deriveDashboardFromHistory(
 } {
   const serviceAmounts = history.reduce<Record<string, number>>(
     (amounts, scan) => {
+      const service = normalizeServiceName(scan.service ?? "");
       if (
-        scan.service &&
+        service &&
         Number.isFinite(scan.amountUsd) &&
-        amounts[scan.service] === undefined
+        amounts[service] === undefined
       ) {
-        amounts[scan.service] = scan.amountUsd;
+        amounts[service] = scan.amountUsd;
       }
       return amounts;
     },
@@ -267,11 +272,15 @@ export function applyHistoryToDashboard(
   serviceAmounts: Record<string, number>;
   spent: number;
 } {
+  const normalizedHistory = history.map((scan) => ({
+    ...scan,
+    service: normalizeServiceName(scan.service),
+  }));
   const { serviceAmounts, spent } = deriveDashboardFromHistory(
-    history,
+    normalizedHistory,
     initialSpent,
     serviceDefaults,
   );
 
-  return { scanHistory: history, serviceAmounts, spent };
+  return { scanHistory: normalizedHistory, serviceAmounts, spent };
 }

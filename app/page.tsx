@@ -321,26 +321,44 @@ function useAnimatedNumber(target: number, durationMs = 900) {
   const [display, setDisplay] = useState(target);
   const fromRef = useRef(target);
   const frameRef = useRef<number | null>(null);
+  const displayRef = useRef(target);
 
   useEffect(() => {
-    const from = fromRef.current;
-    const start = performance.now();
+    displayRef.current = display;
+  }, [display]);
+
+  useEffect(() => {
     if (frameRef.current) cancelAnimationFrame(frameRef.current);
+
+    // Snap to zero so removals never leave a stale animated total.
+    if (target === 0) {
+      fromRef.current = 0;
+      displayRef.current = 0;
+      setDisplay(0);
+      return;
+    }
+
+    const from = displayRef.current;
+    fromRef.current = from;
+    const start = performance.now();
 
     const tick = (now: number) => {
       const progress = Math.min((now - start) / durationMs, 1);
       const value = from + (target - from) * easeOutCubic(progress);
+      displayRef.current = value;
       setDisplay(value);
       if (progress < 1) {
         frameRef.current = requestAnimationFrame(tick);
       } else {
         fromRef.current = target;
+        displayRef.current = target;
       }
     };
 
     frameRef.current = requestAnimationFrame(tick);
     return () => {
       if (frameRef.current) cancelAnimationFrame(frameRef.current);
+      fromRef.current = displayRef.current;
     };
   }, [target, durationMs]);
 
@@ -1036,18 +1054,18 @@ export default function Dashboard() {
         : []),
     ];
     const known = new Set(base.map((tool) => tool.name));
-    const extras: ToolDef[] = allowCustomTools
-      ? Object.keys(serviceAmounts)
-          .filter((name) => !known.has(name))
-          .map((name) => ({
-            name,
-            type: "Custom",
-            suggestedAmount: 0,
-            isUsageBased: true,
-            accent: "bg-sage/25 text-sage-soft",
-            origin: "custom" as const,
-          }))
-      : [];
+    // Always surface tracked orphans (e.g. leftover custom rows on Free) so
+    // their spend stays visible and removable — not a ghost $20 in This month.
+    const extras: ToolDef[] = Object.keys(serviceAmounts)
+      .filter((name) => !known.has(name))
+      .map((name, index) => ({
+        name,
+        type: allowCustomTools ? "Custom" : "Tracked",
+        suggestedAmount: 0,
+        isUsageBased: true,
+        accent: CUSTOM_ACCENTS[index % CUSTOM_ACCENTS.length],
+        origin: "custom" as const,
+      }));
     return [...base, ...extras];
   })();
 
@@ -3452,13 +3470,18 @@ export default function Dashboard() {
           onSwitchToTrack={() => openManualCorrection(manualService)}
           onClose={() => setIsManualCorrectionOpen(false)}
           onSave={saveManualCorrection}
-          canClear={
-            serviceAmounts[
+          canClear={(() => {
+            const target = (
               manualModalMode === "edit_custom"
                 ? (editingCustomOriginal ?? customName.trim())
                 : manualService
-            ] !== undefined
-          }
+            )
+              .trim()
+              .toLowerCase();
+            return Object.keys(serviceAmounts).some(
+              (key) => key.toLowerCase() === target,
+            );
+          })()}
           onClear={() =>
             clearTrackedTool(
               manualModalMode === "edit_custom"
