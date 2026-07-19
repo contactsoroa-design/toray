@@ -20,12 +20,17 @@ import { FeedbackModal } from "@/components/FeedbackModal";
 import type { FeedbackContext } from "@/lib/feedback";
 import {
   applyHistoryToDashboard,
+  clearAllRemovedServices,
+  clearServiceRemoved,
   deleteBillingScansForService,
   fetchUserBillingScans,
+  filterRemovedServices,
   insertBillingScan,
   isValidServiceName,
+  markServiceRemoved,
   mergeBillingScanHistories,
   PRESET_SERVICES,
+  readRemovedServices,
   type BillingScan,
   type ServiceName,
 } from "@/lib/billing-scans";
@@ -1331,11 +1336,19 @@ export default function Dashboard() {
         );
       }
 
-      const localHistory = readLocalHistory();
+      const removedServices = readRemovedServices();
+      const localHistory = filterRemovedServices(
+        readLocalHistory(),
+        removedServices,
+      );
       setCloudSyncStatus("syncing");
       try {
         const remoteHistory = await fetchUserBillingScans(supabase);
-        const merged = mergeBillingScanHistories(localHistory, remoteHistory);
+        const merged = mergeBillingScanHistories(
+          localHistory,
+          remoteHistory,
+          removedServices,
+        );
         const dashboard = applyHistoryToDashboard(
           merged,
           INITIAL_SPENT,
@@ -1364,7 +1377,11 @@ export default function Dashboard() {
     }
 
     async function hydrateDashboard() {
-      const localHistory = readLocalHistory();
+      const removedServices = readRemovedServices();
+      const localHistory = filterRemovedServices(
+        readLocalHistory(),
+        removedServices,
+      );
       const serviceDefaults = [
         ...PRESET_TOOLS.map((tool) => ({ name: tool.name, amount: 0 })),
         ...local.customTools.map((tool) => ({ name: tool.name, amount: 0 })),
@@ -1381,6 +1398,9 @@ export default function Dashboard() {
           localDashboard.spent,
           localDashboard.serviceAmounts,
         );
+      } else {
+        // Ensure a prior remove isn't overwritten by stale in-memory defaults.
+        applyDashboardState([], INITIAL_SPENT, {});
       }
 
       if (stripeSessionId) {
@@ -1521,6 +1541,7 @@ export default function Dashboard() {
 
   function resetDeviceDashboard() {
     window.localStorage.removeItem(SCAN_HISTORY_KEY);
+    clearAllRemovedServices();
     const { hiddenTools: starterHidden } = clearLocalAccountData();
     setScanHistory([]);
     setServiceAmounts({});
@@ -1638,6 +1659,7 @@ export default function Dashboard() {
       return false;
     }
 
+    clearServiceRemoved(scan.service);
     setServiceAmounts((current) => ({
       ...current,
       [scan.service]: scan.amountUsd,
@@ -1661,6 +1683,9 @@ export default function Dashboard() {
       (scan) => scan.service.toLowerCase() === target,
     );
     if (matchedKey === undefined && !historyMatches) return;
+
+    // Prevent cloud/local merge from resurrecting this service after remove.
+    markServiceRemoved(matchedKey ?? name);
 
     setServiceAmounts((current) => {
       const next = { ...current };

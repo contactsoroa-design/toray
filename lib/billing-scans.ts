@@ -49,6 +49,60 @@ export function isValidServiceName(value: string): boolean {
   return trimmed.length >= 1 && trimmed.length <= 64;
 }
 
+/** Services the user removed locally — must not come back from cloud merge. */
+export const REMOVED_SERVICES_KEY = "toray-billing-removed-services";
+
+export function readRemovedServices(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(REMOVED_SERVICES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export function markServiceRemoved(service: ServiceName) {
+  if (typeof window === "undefined") return;
+  const target = service.trim().toLowerCase();
+  if (!target) return;
+  const next = Array.from(new Set([...readRemovedServices(), target]));
+  window.localStorage.setItem(REMOVED_SERVICES_KEY, JSON.stringify(next));
+}
+
+export function clearServiceRemoved(service: ServiceName) {
+  if (typeof window === "undefined") return;
+  const target = service.trim().toLowerCase();
+  const next = readRemovedServices().filter((name) => name !== target);
+  if (next.length === 0) {
+    window.localStorage.removeItem(REMOVED_SERVICES_KEY);
+  } else {
+    window.localStorage.setItem(REMOVED_SERVICES_KEY, JSON.stringify(next));
+  }
+}
+
+export function clearAllRemovedServices() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(REMOVED_SERVICES_KEY);
+}
+
+export function filterRemovedServices(
+  history: BillingScan[],
+  removed: string[] = readRemovedServices(),
+): BillingScan[] {
+  if (removed.length === 0) return history;
+  const blocked = new Set(removed.map((name) => name.toLowerCase()));
+  return history.filter(
+    (scan) => !blocked.has(scan.service.trim().toLowerCase()),
+  );
+}
+
 export function mapDbRowToBillingScan(row: BillingScanRow): BillingScan | null {
   if (!isValidServiceName(row.service)) return null;
 
@@ -117,22 +171,47 @@ export async function deleteBillingScansForService(
 
   if (!user) return;
 
-  const { error } = await supabase
+  const target = service.trim().toLowerCase();
+
+  // Exact match first (common path).
+  const { error: exactError } = await supabase
     .from("billing_scans")
     .delete()
     .eq("user_id", user.id)
     .eq("service", service);
+  if (exactError) throw exactError;
 
-  if (error) throw error;
+  // Also wipe any case/variant rows for this service name.
+  const { data: rows, error: listError } = await supabase
+    .from("billing_scans")
+    .select("id, service")
+    .eq("user_id", user.id);
+  if (listError) throw listError;
+
+  const ids = (rows ?? [])
+    .filter((row) => String(row.service).trim().toLowerCase() === target)
+    .map((row) => row.id as string);
+  if (ids.length === 0) return;
+
+  const { error: bulkError } = await supabase
+    .from("billing_scans")
+    .delete()
+    .eq("user_id", user.id)
+    .in("id", ids);
+  if (bulkError) throw bulkError;
 }
 
 export function mergeBillingScanHistories(
   local: BillingScan[],
   remote: BillingScan[],
+  removedServices: string[] = readRemovedServices(),
 ): BillingScan[] {
   const byId = new Map<string, BillingScan>();
 
-  for (const scan of [...local, ...remote]) {
+  for (const scan of filterRemovedServices(
+    [...local, ...remote],
+    removedServices,
+  )) {
     byId.set(scan.id, scan);
   }
 
