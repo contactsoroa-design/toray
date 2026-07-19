@@ -973,7 +973,6 @@ export default function Dashboard() {
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
 
   const [isDragging, setIsDragging] = useState(false);
-  const [spent, setSpent] = useState(INITIAL_SPENT);
   const [scanStatus, setScanStatus] = useState<ScanStatus>("idle");
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [scanStep, setScanStep] = useState(0);
@@ -1063,6 +1062,12 @@ export default function Dashboard() {
       return a.name.localeCompare(b.name);
     });
 
+  // Single source of truth: never keep a parallel spent counter (it can desync on remove).
+  const spent =
+    Math.round(
+      Object.values(serviceAmounts).reduce((sum, amount) => sum + amount, 0) *
+        100,
+    ) / 100;
   const animatedSpent = useAnimatedNumber(spent);
   const projected = computeProjectedSpend(serviceAmounts, catalog);
   const showFullOutlook = canSeeFullOutlook(isFounding);
@@ -1154,12 +1159,11 @@ export default function Dashboard() {
 
   function applyDashboardState(
     history: BillingScan[],
-    nextSpent: number,
+    _nextSpent: number,
     nextAmounts: Record<string, number>,
   ) {
     setScanHistory(history);
     setServiceAmounts(nextAmounts);
-    setSpent(nextSpent);
     const newest = history[0]?.scannedAt;
     if (newest) {
       setLastSyncedAt(formatClock(new Date(newest)));
@@ -1520,7 +1524,6 @@ export default function Dashboard() {
     const { hiddenTools: starterHidden } = clearLocalAccountData();
     setScanHistory([]);
     setServiceAmounts({});
-    setSpent(INITIAL_SPENT);
     setBudget(null);
     setCustomTools([]);
     setHiddenTools(starterHidden);
@@ -1635,13 +1638,10 @@ export default function Dashboard() {
       return false;
     }
 
-    const existingAmount = serviceAmounts[scan.service] ?? 0;
-
     setServiceAmounts((current) => ({
       ...current,
       [scan.service]: scan.amountUsd,
     }));
-    setSpent((current) => current - existingAmount + scan.amountUsd);
     setScanHistory((current) => {
       const next = [scan, ...current].slice(0, 50);
       window.localStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(next));
@@ -1653,17 +1653,26 @@ export default function Dashboard() {
   }
 
   function clearTrackedTool(name: ServiceName) {
-    const existingAmount = serviceAmounts[name];
-    if (existingAmount === undefined) return;
+    const target = name.trim().toLowerCase();
+    const matchedKey = Object.keys(serviceAmounts).find(
+      (key) => key.toLowerCase() === target,
+    );
+    const historyMatches = scanHistory.some(
+      (scan) => scan.service.toLowerCase() === target,
+    );
+    if (matchedKey === undefined && !historyMatches) return;
 
     setServiceAmounts((current) => {
       const next = { ...current };
-      delete next[name];
+      for (const key of Object.keys(next)) {
+        if (key.toLowerCase() === target) delete next[key];
+      }
       return next;
     });
-    setSpent((current) => Math.max(0, current - existingAmount));
     setScanHistory((current) => {
-      const next = current.filter((scan) => scan.service !== name);
+      const next = current.filter(
+        (scan) => scan.service.toLowerCase() !== target,
+      );
       window.localStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(next));
       return next;
     });
@@ -1674,8 +1683,9 @@ export default function Dashboard() {
 
     const supabase = supabaseRef.current;
     if (supabase && isLoggedIn) {
+      const cloudName = matchedKey ?? name;
       setCloudSyncStatus("syncing");
-      void deleteBillingScansForService(supabase, name)
+      void deleteBillingScansForService(supabase, cloudName)
         .then(() => {
           setCloudSyncStatus("synced");
           window.setTimeout(() => setCloudSyncStatus("idle"), 2500);
@@ -1703,39 +1713,27 @@ export default function Dashboard() {
     }
     if (!findCustomTool(name)) return;
 
-    const existingAmount = serviceAmounts[name];
+    const target = name.trim().toLowerCase();
+    const hasTrackedAmount = Object.keys(serviceAmounts).some(
+      (key) => key.toLowerCase() === target,
+    );
+    const hasHistory = scanHistory.some(
+      (scan) => scan.service.toLowerCase() === target,
+    );
+
     persistPrefs({
       customTools: customTools.filter(
-        (tool) => tool.name.toLowerCase() !== name.toLowerCase(),
+        (tool) => tool.name.toLowerCase() !== target,
       ),
       hiddenTools: hiddenTools.filter(
-        (item) => item.toLowerCase() !== name.toLowerCase(),
+        (item) => item.toLowerCase() !== target,
       ),
     });
 
-    if (existingAmount !== undefined) {
-      setServiceAmounts((current) => {
-        const next = { ...current };
-        delete next[name];
-        return next;
-      });
-      setSpent((current) => Math.max(0, current - existingAmount));
-      setScanHistory((current) => {
-        const next = current.filter((scan) => scan.service !== name);
-        window.localStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(next));
-        return next;
-      });
-      markUpdated();
-      const supabase = supabaseRef.current;
-      if (supabase && isLoggedIn) {
-        setCloudSyncStatus("syncing");
-        void deleteBillingScansForService(supabase, name)
-          .then(() => {
-            setCloudSyncStatus("synced");
-            window.setTimeout(() => setCloudSyncStatus("idle"), 2500);
-          })
-          .catch(() => setCloudSyncStatus("error"));
-      }
+    if (hasTrackedAmount || hasHistory) {
+      clearTrackedTool(name);
+      setScanMessage(`${name} deleted from your tools`);
+      return;
     }
 
     setScanStatus("success");
