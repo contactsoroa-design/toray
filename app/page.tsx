@@ -5,6 +5,7 @@ import {
   Check,
   Download,
   EyeOff,
+  ImagePlus,
   LogOut,
   MessageSquareText,
   PencilLine,
@@ -2212,6 +2213,11 @@ export default function Dashboard() {
     event.target.value = "";
   }
 
+  function pickScreenshot() {
+    if (isScanning) return;
+    fileInputRef.current?.click();
+  }
+
   function handleDrop(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsDragging(false);
@@ -2219,6 +2225,10 @@ export default function Dashboard() {
     const file = event.dataTransfer.files?.[0];
     if (file) void runBillingScan(file);
   }
+
+  const visionSupportCopy = isFounding
+    ? "OpenAI, Anthropic, Gemini, Grok, Cursor, or Copilot billing — Vision unlocked."
+    : `OpenAI / Anthropic Vision free · up to ${FREE_TOOL_LIMIT} presets. Pro Vision + unlimited tools with ToRay Pro.`;
 
   function hideTool(name: string) {
     if (serviceAmounts[name] !== undefined) return;
@@ -2273,7 +2283,7 @@ export default function Dashboard() {
       <div aria-hidden className="pointer-events-none absolute -left-16 bottom-32 h-72 w-72 rounded-full bg-blush/10 blur-3xl" />
 
       <header className="relative z-10 border-b border-hairline">
-        <div className="mx-auto flex h-[64px] max-w-6xl items-center justify-between gap-4 px-6">
+        <div className="mx-auto flex h-[64px] max-w-6xl items-center justify-between gap-3 px-4 sm:gap-4 sm:px-6">
           <div className="flex items-center gap-3">
             <LogoMark />
             <span className="font-serif text-[22px] tracking-[-0.02em] text-bone">
@@ -2334,7 +2344,7 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main className="relative z-10 mx-auto max-w-6xl px-6 pb-24">
+      <main className="relative z-10 mx-auto max-w-6xl px-4 pb-24 sm:px-6">
         {(authNotice || isLoggedIn) && (
           <div
             className={`mt-6 rounded-[20px] border px-4 py-3 md:px-5 ${
@@ -2409,23 +2419,23 @@ export default function Dashboard() {
           </div>
         )}
 
-        <section className="grid grid-cols-1 items-start gap-8 py-8 lg:grid-cols-2 lg:gap-10 lg:py-10">
+        <section className="grid grid-cols-1 items-start gap-6 py-6 md:gap-8 md:py-8 lg:grid-cols-2 lg:gap-10 lg:py-10">
           <div>
             <Eyebrow>Free Instant Scanner</Eyebrow>
-            <h1 className="mt-3 font-serif text-4xl font-medium tracking-[-0.02em] text-bone md:text-5xl">
+            <h1 className="mt-3 font-serif text-[2rem] font-medium leading-tight tracking-[-0.02em] text-bone sm:text-4xl md:text-5xl">
               Know your AI burn before your card does.
             </h1>
-            <p className="mt-4 max-w-md text-[15px] leading-relaxed text-bone-muted">
+            <p className="mt-3 max-w-md text-[14px] leading-relaxed text-bone-muted sm:mt-4 sm:text-[15px]">
               Free: scan OpenAI or Anthropic, track up to {FREE_TOOL_LIMIT}{" "}
               presets, and set a budget up to ${FREE_BUDGET_CAP}/mo. ToRay Pro
               unlocks custom tools, unlimited tracking & budget, Pro Vision
               (Gemini/Grok/Cursor/Copilot), outlook, Stack Pulse, and CSV.
             </p>
-            <p className="mt-3 text-[13px] text-bone-muted">
+            <p className="mt-3 hidden text-[13px] text-bone-muted sm:block">
               Screenshots are analyzed securely and not stored by ToRay. Totals
               stay on this device until you sign in.
             </p>
-            <p className="mt-6 text-sm text-bone-muted">
+            <p className="mt-4 text-[13px] text-bone-muted sm:mt-6 sm:text-sm">
               {lastSyncedAt
                 ? `Last update ${lastSyncedAt} · ${storageChip} · ${planChip}`
                 : hasSpend
@@ -2434,28 +2444,94 @@ export default function Dashboard() {
             </p>
           </div>
 
-          <div id="quick-scan" className="rounded-[28px] border border-sage/35 bg-surface p-5 shadow-[0_20px_50px_rgba(0,0,0,0.25)] md:p-6">
-            <div className="flex items-center justify-between gap-3">
+          <div id="quick-scan" className="rounded-[28px] border border-sage/35 bg-surface p-4 shadow-[0_20px_50px_rgba(0,0,0,0.25)] sm:p-5 md:p-6">
+            <div className="flex items-start justify-between gap-3">
               <Eyebrow>Scan now</Eyebrow>
-              <span className="text-[12px] text-mint">
+              <span className="max-w-[58%] text-right text-[11px] leading-snug text-mint sm:max-w-none sm:text-[12px]">
                 {cloudSyncStatus === "syncing"
                   ? "Saving to cloud…"
                   : cloudSyncStatus === "error"
-                    ? "Cloud save failed — kept on this device"
+                    ? "Cloud save failed — kept on device"
                     : historyLabel}
               </span>
             </div>
 
-            <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleFileChange} />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={handleFileChange}
+            />
 
-            <div
-              onDragOver={(e) => { e.preventDefault(); if (!isScanning) setIsDragging(true); }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={handleDrop}
-              className={`relative mt-4 flex min-h-[240px] flex-col items-center justify-center overflow-hidden rounded-[22px] border border-dashed px-5 text-center transition duration-180 ${isDragging ? "border-sage-soft bg-sage/15" : "border-hairline bg-background/40"} ${isScanning ? "pointer-events-none" : ""}`}
+            {/* Mobile: thumb-friendly tap-to-select (no drag-and-drop chrome) */}
+            <button
+              type="button"
+              onClick={pickScreenshot}
+              disabled={isScanning}
+              aria-label="Tap to select a billing screenshot"
+              className={`relative mt-4 flex min-h-[220px] w-full flex-col items-center justify-center overflow-hidden rounded-[22px] border px-5 py-8 text-center transition duration-180 active:scale-[0.985] md:hidden ${
+                isScanning
+                  ? "pointer-events-none border-sage/40 bg-sage/10"
+                  : "border-sage/45 bg-gradient-to-b from-sage/20 to-background/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+              }`}
             >
               {isScanning && (
-                <span aria-hidden className="animate-toray-scan pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-sage-soft to-transparent" />
+                <span
+                  aria-hidden
+                  className="animate-toray-scan pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-sage-soft to-transparent"
+                />
+              )}
+              {isScanning ? (
+                <ScanLoader stepIndex={scanStep} />
+              ) : (
+                <>
+                  {previewUrl && scanStatus === "success" ? (
+                    <div className="mb-4 overflow-hidden rounded-2xl border border-hairline">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={previewUrl}
+                        alt="Uploaded usage screenshot"
+                        className="h-20 w-36 object-cover opacity-90"
+                      />
+                    </div>
+                  ) : (
+                    <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-sage/25 ring-1 ring-sage-soft/30">
+                      <ImagePlus className="h-7 w-7 text-sage-soft" strokeWidth={1.5} />
+                    </div>
+                  )}
+                  <h2 className="font-serif text-[1.35rem] leading-snug tracking-[-0.02em] text-bone">
+                    📱 Tap to Select Screenshot
+                  </h2>
+                  <p className="mt-2 max-w-[18rem] text-[13px] leading-relaxed text-bone-muted">
+                    {visionSupportCopy}
+                  </p>
+                  <span className="mt-6 inline-flex min-h-12 items-center justify-center rounded-full bg-sage px-7 text-[15px] font-semibold text-bone">
+                    Choose from photos
+                  </span>
+                </>
+              )}
+            </button>
+
+            {/* Desktop / tablet: keep the finished drag-and-drop zone */}
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (!isScanning) setIsDragging(true);
+              }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={handleDrop}
+              className={`relative mt-4 hidden min-h-[240px] flex-col items-center justify-center overflow-hidden rounded-[22px] border border-dashed px-5 text-center transition duration-180 md:flex ${
+                isDragging
+                  ? "border-sage-soft bg-sage/15"
+                  : "border-hairline bg-background/40"
+              } ${isScanning ? "pointer-events-none" : ""}`}
+            >
+              {isScanning && (
+                <span
+                  aria-hidden
+                  className="animate-toray-scan pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-sage-soft to-transparent"
+                />
               )}
 
               {isScanning ? (
@@ -2465,74 +2541,100 @@ export default function Dashboard() {
                   {previewUrl && scanStatus === "success" ? (
                     <div className="mb-3 overflow-hidden rounded-2xl border border-hairline">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={previewUrl} alt="Uploaded usage screenshot" className="h-16 w-28 object-cover opacity-80" />
+                      <img
+                        src={previewUrl}
+                        alt="Uploaded usage screenshot"
+                        className="h-16 w-28 object-cover opacity-80"
+                      />
                     </div>
                   ) : (
                     <div className="mb-1 flex h-14 w-14 items-center justify-center rounded-full bg-sage/20">
-                      <ScanLine className={`h-6 w-6 transition-colors ${isDragging ? "text-sage-soft" : "text-sage-soft/70"}`} strokeWidth={1.5} />
+                      <ScanLine
+                        className={`h-6 w-6 transition-colors ${
+                          isDragging ? "text-sage-soft" : "text-sage-soft/70"
+                        }`}
+                        strokeWidth={1.5}
+                      />
                     </div>
                   )}
-                  <h2 className="mt-2 font-serif text-xl text-bone">Drop a billing screenshot</h2>
+                  <h2 className="mt-2 font-serif text-xl text-bone">
+                    Drop a billing screenshot
+                  </h2>
                   <p className="mt-2 max-w-[280px] text-[13px] leading-relaxed text-bone-muted">
-                    {isFounding
-                      ? "OpenAI, Anthropic, Gemini, Grok, Cursor, or Copilot billing — Vision unlocked."
-                      : `OpenAI / Anthropic Vision free · up to ${FREE_TOOL_LIMIT} presets. Pro Vision (Gemini/Grok/Cursor/Copilot) + unlimited tools with ToRay Pro.`}
+                    {visionSupportCopy}
                   </p>
-                  <button type="button" onClick={() => fileInputRef.current?.click()} className="mt-5 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition hover:bg-sage-glow">
-                    Choose file
-                  </button>
                   <button
                     type="button"
-                    onClick={() => openManualCorrection("Gemini API")}
-                    className="mt-3 inline-flex items-center gap-1.5 text-[13px] text-sage-soft underline-offset-4 transition hover:text-bone hover:underline"
+                    onClick={pickScreenshot}
+                    className="mt-5 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-bone transition hover:bg-sage-glow"
                   >
-                    <Plus className="h-3.5 w-3.5" />
-                    {isFounding ? "Add any tool manually" : "Set a preset amount"}
+                    Choose file
                   </button>
                 </>
               )}
             </div>
 
+            <div className="mt-3 flex flex-col items-center gap-2 sm:mt-3">
+              <button
+                type="button"
+                onClick={() => openManualCorrection("Gemini API")}
+                className="inline-flex min-h-11 items-center justify-center gap-1.5 px-3 text-[13px] text-sage-soft underline-offset-4 transition hover:text-bone hover:underline md:min-h-0"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {isFounding ? "Add any tool manually" : "Set a preset amount"}
+              </button>
+            </div>
+
             {scanMessage && (
-              <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1">
-                <p className={`text-[13px] ${scanStatus === "error" ? "text-warning" : scanStatus === "success" ? "text-mint" : "text-bone-muted"}`}>
+              <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 sm:gap-y-1">
+                <p
+                  className={`text-[13px] leading-relaxed ${
+                    scanStatus === "error"
+                      ? "text-warning"
+                      : scanStatus === "success"
+                        ? "text-mint"
+                        : "text-bone-muted"
+                  }`}
+                >
                   {scanMessage}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const latestScan = scanHistory[0];
-                    openManualCorrection(
-                      latestScan?.service ?? "OpenAI API",
-                      latestScan?.amountUsd,
-                      latestScan?.billingPeriod,
-                    );
-                  }}
-                  className="inline-flex items-center gap-1 text-[13px] text-sage-soft underline-offset-4 transition hover:text-bone hover:underline"
-                >
-                  <PencilLine className="h-3.5 w-3.5" />
-                  {scanStatus === "success" ? "Correct amount" : "Enter manually"}
-                </button>
-                {scanStatus === "error" && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                   <button
                     type="button"
-                    onClick={() => openFeedback("scan_error")}
-                    className="inline-flex items-center gap-1 text-[13px] text-bone-muted underline-offset-4 transition hover:text-bone hover:underline"
+                    onClick={() => {
+                      const latestScan = scanHistory[0];
+                      openManualCorrection(
+                        latestScan?.service ?? "OpenAI API",
+                        latestScan?.amountUsd,
+                        latestScan?.billingPeriod,
+                      );
+                    }}
+                    className="inline-flex min-h-10 items-center gap-1 text-[13px] text-sage-soft underline-offset-4 transition hover:text-bone hover:underline md:min-h-0"
                   >
-                    <MessageSquareText className="h-3.5 w-3.5" />
-                    Tell us what failed
+                    <PencilLine className="h-3.5 w-3.5" />
+                    {scanStatus === "success" ? "Correct amount" : "Enter manually"}
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setScanMessage(null);
-                    if (scanStatus === "success") setScanStatus("idle");
-                  }}
-                  className="text-[13px] text-bone-muted underline-offset-4 transition hover:text-bone hover:underline"
-                >
-                  Dismiss
-                </button>
+                  {scanStatus === "error" && (
+                    <button
+                      type="button"
+                      onClick={() => openFeedback("scan_error")}
+                      className="inline-flex min-h-10 items-center gap-1 text-[13px] text-bone-muted underline-offset-4 transition hover:text-bone hover:underline md:min-h-0"
+                    >
+                      <MessageSquareText className="h-3.5 w-3.5" />
+                      Tell us what failed
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScanMessage(null);
+                      if (scanStatus === "success") setScanStatus("idle");
+                    }}
+                    className="inline-flex min-h-10 items-center text-[13px] text-bone-muted underline-offset-4 transition hover:text-bone hover:underline md:min-h-0"
+                  >
+                    Dismiss
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -2889,14 +2991,14 @@ export default function Dashboard() {
 
         <section className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-5 md:mt-8">
           <div className="rounded-[28px] border border-hairline bg-surface p-6 md:p-8 lg:col-span-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
               <Eyebrow>Your AI tools</Eyebrow>
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                 {hiddenUnsetCount > 0 && (
                   <button
                     type="button"
                     onClick={showHiddenTools}
-                    className="text-sm text-bone-muted transition hover:text-bone"
+                    className="inline-flex min-h-10 items-center text-sm text-bone-muted transition hover:text-bone md:min-h-0"
                   >
                     Show hidden ({hiddenUnsetCount})
                   </button>
@@ -2904,7 +3006,7 @@ export default function Dashboard() {
                 <button
                   type="button"
                   onClick={hideAllUnset}
-                  className="inline-flex items-center gap-1 text-sm text-bone-muted transition hover:text-bone"
+                  className="inline-flex min-h-10 items-center gap-1 text-sm text-bone-muted transition hover:text-bone md:min-h-0"
                 >
                   <EyeOff className="h-3.5 w-3.5" />
                   Hide unset
@@ -2918,7 +3020,7 @@ export default function Dashboard() {
                         })
                       : openManualCorrection("OpenAI API")
                   }
-                  className="inline-flex items-center gap-1 text-sm text-sage-soft transition hover:text-bone"
+                  className="inline-flex min-h-10 items-center gap-1 rounded-full border border-sage/35 bg-sage/10 px-3 text-sm text-sage-soft transition hover:text-bone md:min-h-0 md:rounded-none md:border-0 md:bg-transparent md:px-0"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   {isFounding ? "Add custom tool" : "Track preset"}
