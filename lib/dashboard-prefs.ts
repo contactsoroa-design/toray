@@ -169,7 +169,7 @@ export function mergePrefs(
     customTools: Array.isArray(meta.toray_custom_tools)
       ? meta.toray_custom_tools
       : local.customTools,
-    isFounding: meta.toray_founding === true || local.isFounding,
+    isFounding: meta.toray_founding === true,
   };
 }
 
@@ -187,7 +187,8 @@ export async function persistPrefsToCloud(
       toray_budget: prefs.budget,
       toray_hidden_tools: prefs.hiddenTools,
       toray_custom_tools: prefs.customTools,
-      toray_founding: prefs.isFounding,
+      // Pro is owned by founding_members — never cache it in user_metadata.
+      toray_founding: false,
     } satisfies PrefsMeta,
   });
 }

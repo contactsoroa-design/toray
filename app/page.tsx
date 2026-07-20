@@ -1202,10 +1202,12 @@ export default function Dashboard() {
     // Intentional client-only hydrate from localStorage (no SSR equivalent).
     const local = readLocalPrefs();
     // eslint-disable-next-line react-hooks/set-state-in-effect -- mount hydrate from device prefs
-    setBudget(clampBudgetForPlan(local.isFounding, local.budget));
+    setBudget(clampBudgetForPlan(false, local.budget));
     setHiddenTools(local.hiddenTools);
     setCustomTools(local.customTools);
-    setIsFounding(local.isFounding);
+    // Pro is never granted from cache alone — founding_members via /api/founding/status.
+    setIsFounding(false);
+    if (local.isFounding) writeFounding(false);
 
     const params = new URLSearchParams(window.location.search);
     const stripeSessionId =
@@ -1252,9 +1254,9 @@ export default function Dashboard() {
         };
 
         if (result.isFounding) {
-          setIsFounding(true);
-          writeFounding(true);
           if (result.matchesSignedInUser) {
+            setIsFounding(true);
+            writeFounding(true);
             setFoundingVerifyMessage(
               "ToRay Pro verified — Pro Vision providers are unlocked.",
             );
@@ -1292,8 +1294,12 @@ export default function Dashboard() {
           writeFounding(next);
           return next;
         }
+        // Logged out: Free only — never keep a stale Pro cache.
+        setIsFounding(false);
+        writeFounding(false);
+        return false;
       } catch {
-        // Keep local preference if the status endpoint is unavailable.
+        // Keep UI Free if the status endpoint is unavailable.
       }
       return null;
     }
@@ -1335,8 +1341,7 @@ export default function Dashboard() {
       writeHiddenTools(remotePrefs.hiddenTools);
       writeCustomTools(remotePrefs.customTools);
 
-      const foundingNow =
-        (await refreshFoundingStatus()) ?? remotePrefs.isFounding;
+      const foundingNow = (await refreshFoundingStatus()) ?? false;
       const clampedBudget = clampBudgetForPlan(
         foundingNow,
         remotePrefs.budget,
@@ -1453,6 +1458,8 @@ export default function Dashboard() {
         cloudHydratedForRef.current = null;
         setIsLoggedIn(false);
         setUserEmail(null);
+        setIsFounding(false);
+        writeFounding(false);
         setCloudSyncStatus("idle");
         // handleSignOut already wiped the device; avoid a second conflicting notice.
         if (!clearingDeviceOnSignOutRef.current) {
