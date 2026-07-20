@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { DM_Sans, DM_Mono, Fraunces } from "next/font/google";
+import { MetaPixel } from "@/components/MetaPixel";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -23,7 +24,7 @@ const fraunces = Fraunces({
 export const metadata: Metadata = {
   title: "ToRay — Free Instant AI Billing Scanner",
   description:
-    "Scan OpenAI and Anthropic billing screenshots free (up to 3 tools, budgets to $400/mo). ToRay Pro at $12/mo unlocks unlimited tools & budget, Pro Vision (Gemini/Grok/Cursor/Copilot), month-end outlook, Stack Pulse, and CSV export.",
+    "Upload an OpenAI or Anthropic usage screenshot and see your AI spend in seconds. Free scanner for up to 3 tools; ToRay Pro unlocks unlimited tracking, Pro Vision, outlook, and CSV.",
 };
 
 export default function RootLayout({
@@ -31,12 +32,17 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const metaPixelId = process.env.NEXT_PUBLIC_META_PIXEL_ID?.trim() ?? "";
+
   return (
     <html
       lang="en"
       className={`${dmSans.variable} ${dmMono.variable} ${fraunces.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col">{children}</body>
+      <body className="flex min-h-full flex-col">
+        {metaPixelId ? <MetaPixel pixelId={metaPixelId} /> : null}
+        {children}
+      </body>
     </html>
   );
 }

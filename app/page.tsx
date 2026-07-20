@@ -69,12 +69,16 @@ import {
   foundingVisionUnlockLabel,
   visionProviderToToolName,
 } from "@/lib/vision-providers";
+import { trackMetaCustom, trackScanComplete } from "@/lib/meta-pixel";
 import { createClient } from "@/lib/supabase/client";
 
 const INITIAL_SPENT = 0;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
+const SAMPLE_BILL_PATH = "/sample-openai-billing.png";
 const SCAN_HISTORY_KEY = "toray-billing-scans";
+
+type ScanSource = "upload" | "sample";
 const STRIPE_URL =
   process.env.NEXT_PUBLIC_STRIPE_PAYMENT_LINK ??
   "https://buy.stripe.com/6oU14m0Lu92V2dL0dx9sk00";
@@ -2134,7 +2138,12 @@ export default function Dashboard() {
     setIsManualCorrectionOpen(false);
   }
 
-  async function runBillingScan(file: File) {
+  async function runBillingScan(
+    file: File,
+    options: { source?: ScanSource } = {},
+  ) {
+    const source: ScanSource = options.source ?? "upload";
+
     if (!ALLOWED_TYPES.has(file.type)) {
       setScanStatus("error");
       setScanMessage("PNG, JPEG or WebP only");
@@ -2236,8 +2245,15 @@ export default function Dashboard() {
       }
       setScanStatus("success");
       setScanMessage(
-        `${serviceName} · $${amountUsd.toFixed(2)} saved to your dashboard`,
+        source === "sample"
+          ? `Sample · ${serviceName} · $${amountUsd.toFixed(2)} — now try your own screenshot`
+          : `${serviceName} · $${amountUsd.toFixed(2)} saved to your dashboard`,
       );
+      trackScanComplete({
+        source,
+        service: serviceName,
+        amountUsd,
+      });
     } catch (error) {
       setScanStatus("error");
       setScanMessage(
@@ -2249,9 +2265,34 @@ export default function Dashboard() {
     }
   }
 
+  async function runSampleScan() {
+    if (isScanning) return;
+    trackMetaCustom("SampleScanClick");
+    document
+      .getElementById("quick-scan")
+      ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    try {
+      const response = await fetch(SAMPLE_BILL_PATH);
+      if (!response.ok) {
+        throw new Error("Could not load the sample bill");
+      }
+      const blob = await response.blob();
+      const type = blob.type || "image/png";
+      const file = new File([blob], "sample-openai-billing.png", { type });
+      await runBillingScan(file, { source: "sample" });
+    } catch (error) {
+      setScanStatus("error");
+      setScanMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not load the sample bill",
+      );
+    }
+  }
+
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (file) void runBillingScan(file);
+    if (file) void runBillingScan(file, { source: "upload" });
     event.target.value = "";
   }
 
@@ -2265,7 +2306,7 @@ export default function Dashboard() {
     setIsDragging(false);
     if (isScanning) return;
     const file = event.dataTransfer.files?.[0];
-    if (file) void runBillingScan(file);
+    if (file) void runBillingScan(file, { source: "upload" });
   }
 
   const visionSupportCopy = isFounding
@@ -2468,13 +2509,28 @@ export default function Dashboard() {
               Know your AI burn before your card does.
             </h1>
             <p className="mt-3 max-w-md text-[14px] leading-relaxed text-bone-muted sm:mt-4 sm:text-[15px]">
-              Free: scan OpenAI or Anthropic, track up to {FREE_TOOL_LIMIT}{" "}
-              presets, and set a budget up to ${FREE_BUDGET_CAP}/mo. ToRay Pro
-              unlocks custom tools, unlimited tracking & budget, Pro Vision
-              (Gemini/Grok/Cursor/Copilot), outlook, Stack Pulse, and CSV.
+              Upload an OpenAI or Anthropic usage screenshot — see the dollar
+              total in seconds. No screenshot handy? Run the sample bill first.
             </p>
-            <p className="mt-3 hidden text-[13px] text-bone-muted sm:block">
-              Screenshots are analyzed securely and not stored by ToRay. Totals
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <a
+                href="#quick-scan"
+                className="inline-flex min-h-11 items-center justify-center rounded-full bg-sage px-5 text-[14px] font-semibold text-bone transition hover:bg-sage-glow"
+              >
+                Upload usage screenshot
+              </a>
+              <button
+                type="button"
+                onClick={() => void runSampleScan()}
+                disabled={isScanning}
+                className="inline-flex min-h-11 items-center justify-center rounded-full border border-sage/45 px-5 text-[14px] font-medium text-sage-soft transition hover:border-sage-soft/60 hover:text-bone disabled:opacity-50"
+              >
+                Try sample bill
+              </button>
+            </div>
+            <p className="mt-3 hidden max-w-md text-[13px] text-bone-muted sm:block">
+              Free: up to {FREE_TOOL_LIMIT} presets and ${FREE_BUDGET_CAP}/mo
+              budget. Screenshots are analyzed securely and not stored. Totals
               stay on this device until you sign in.
             </p>
             <p className="mt-4 text-[13px] text-bone-muted sm:mt-6 sm:text-sm">
@@ -2543,7 +2599,7 @@ export default function Dashboard() {
                     </div>
                   )}
                   <h2 className="font-serif text-[1.35rem] leading-snug tracking-[-0.02em] text-bone">
-                    📱 Tap to Select Screenshot
+                    Tap to select screenshot
                   </h2>
                   <p className="mt-2 max-w-[18rem] text-[13px] leading-relaxed text-bone-muted">
                     {visionSupportCopy}
@@ -2617,6 +2673,14 @@ export default function Dashboard() {
             </div>
 
             <div className="mt-3 flex flex-col items-center gap-2 sm:mt-3">
+              <button
+                type="button"
+                onClick={() => void runSampleScan()}
+                disabled={isScanning}
+                className="inline-flex min-h-11 items-center justify-center rounded-full border border-hairline px-4 text-[13px] font-medium text-bone-muted transition hover:border-sage/40 hover:text-bone disabled:opacity-50 md:min-h-0 md:py-2"
+              >
+                No screenshot? Try sample OpenAI bill
+              </button>
               <button
                 type="button"
                 onClick={() => openManualCorrection("Gemini API")}
