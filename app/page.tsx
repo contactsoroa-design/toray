@@ -2511,13 +2511,14 @@ export default function Dashboard() {
 
         <section className="grid grid-cols-1 items-start gap-6 py-6 md:gap-8 md:py-8 lg:grid-cols-2 lg:gap-10 lg:py-10">
           <div>
-            <Eyebrow>Free Instant Scanner</Eyebrow>
+            <Eyebrow>{isFounding ? "ToRay Pro Scanner" : "Free Instant Scanner"}</Eyebrow>
             <h1 className="mt-3 font-serif text-[2rem] font-medium leading-tight tracking-[-0.02em] text-bone sm:text-4xl md:text-5xl">
               Know your AI burn before your card does.
             </h1>
             <p className="mt-3 max-w-md text-[14px] leading-relaxed text-bone-muted sm:mt-4 sm:text-[15px]">
-              Upload an OpenAI or Anthropic usage screenshot — see the dollar
-              total in seconds. No screenshot handy? Run the sample bill first.
+              {isFounding
+                ? "Upload a usage screenshot — OpenAI, Anthropic, or Pro Vision (Gemini/Grok/Cursor/Copilot) — and see the dollar total in seconds."
+                : "Upload an OpenAI or Anthropic usage screenshot — see the dollar total in seconds. No screenshot handy? Run the sample bill first."}
             </p>
             <div className="mt-5 flex flex-wrap items-center gap-3">
               <a
@@ -2526,19 +2527,21 @@ export default function Dashboard() {
               >
                 Upload usage screenshot
               </a>
-              <button
-                type="button"
-                onClick={() => void runSampleScan()}
-                disabled={isScanning}
-                className="inline-flex min-h-11 items-center justify-center rounded-full border border-sage/45 px-5 text-[14px] font-medium text-sage-soft transition hover:border-sage-soft/60 hover:text-bone disabled:opacity-50"
-              >
-                Try sample bill
-              </button>
+              {!isFounding && (
+                <button
+                  type="button"
+                  onClick={() => void runSampleScan()}
+                  disabled={isScanning}
+                  className="inline-flex min-h-11 items-center justify-center rounded-full border border-sage/45 px-5 text-[14px] font-medium text-sage-soft transition hover:border-sage-soft/60 hover:text-bone disabled:opacity-50"
+                >
+                  Try sample bill
+                </button>
+              )}
             </div>
             <p className="mt-3 hidden max-w-md text-[13px] text-bone-muted sm:block">
-              Free: up to {FREE_TOOL_LIMIT} presets and ${FREE_BUDGET_CAP}/mo
-              budget. Screenshots are analyzed securely and not stored. Totals
-              stay on this device until you sign in.
+              {isFounding
+                ? "Pro: unlimited tools & budget, Pro Vision, outlook, Stack Pulse, and CSV. Screenshots are analyzed securely and not stored."
+                : `Free: up to ${FREE_TOOL_LIMIT} presets and $${FREE_BUDGET_CAP}/mo budget. Screenshots are analyzed securely and not stored. Totals stay on this device until you sign in.`}
             </p>
             <p className="mt-4 text-[13px] text-bone-muted sm:mt-6 sm:text-sm">
               {lastSyncedAt
@@ -2680,14 +2683,16 @@ export default function Dashboard() {
             </div>
 
             <div className="mt-3 flex flex-col items-center gap-2 sm:mt-3">
-              <button
-                type="button"
-                onClick={() => void runSampleScan()}
-                disabled={isScanning}
-                className="inline-flex min-h-11 items-center justify-center rounded-full border border-hairline px-4 text-[13px] font-medium text-bone-muted transition hover:border-sage/40 hover:text-bone disabled:opacity-50 md:min-h-0 md:py-2"
-              >
-                No screenshot? Try sample OpenAI bill
-              </button>
+              {!isFounding && (
+                <button
+                  type="button"
+                  onClick={() => void runSampleScan()}
+                  disabled={isScanning}
+                  className="inline-flex min-h-11 items-center justify-center rounded-full border border-hairline px-4 text-[13px] font-medium text-bone-muted transition hover:border-sage/40 hover:text-bone disabled:opacity-50 md:min-h-0 md:py-2"
+                >
+                  No screenshot? Try sample OpenAI bill
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => openManualCorrection("Gemini API")}
