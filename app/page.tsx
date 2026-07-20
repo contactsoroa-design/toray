@@ -69,7 +69,11 @@ import {
   foundingVisionUnlockLabel,
   visionProviderToToolName,
 } from "@/lib/vision-providers";
-import { trackMetaCustom, trackScanComplete } from "@/lib/meta-pixel";
+import {
+  identifyMetaUser,
+  trackMetaCustom,
+  trackScanComplete,
+} from "@/lib/meta-pixel";
 import { createClient } from "@/lib/supabase/client";
 
 const INITIAL_SPENT = 0;
@@ -1324,6 +1328,7 @@ export default function Dashboard() {
       cloudHydratedForRef.current = user.email;
 
       setUserEmail(user.email);
+      identifyMetaUser(user.email);
       setIsLoggedIn(true);
       setIsSignInOpen(false);
 
@@ -1458,6 +1463,7 @@ export default function Dashboard() {
         cloudHydratedForRef.current = null;
         setIsLoggedIn(false);
         setUserEmail(null);
+        identifyMetaUser(null);
         setIsFounding(false);
         writeFounding(false);
         setCloudSyncStatus("idle");
@@ -1604,6 +1610,7 @@ export default function Dashboard() {
     cloudHydratedForRef.current = null;
     setIsLoggedIn(false);
     setUserEmail(null);
+    identifyMetaUser(null);
     setCloudSyncStatus("idle");
     setIsSignInOpen(false);
     setAuthNotice(
@@ -2260,6 +2267,7 @@ export default function Dashboard() {
         source,
         service: serviceName,
         amountUsd,
+        email: userEmail,
       });
     } catch (error) {
       setScanStatus("error");
