@@ -4,12 +4,26 @@ declare global {
       command: "track" | "trackCustom" | "init" | "consent",
       eventOrId: string,
       params?: Record<string, unknown>,
+      options?: { eventID?: string },
     ) => void;
   }
 }
 
 function pixelId(): string {
   return process.env.NEXT_PUBLIC_META_PIXEL_ID?.trim() ?? "";
+}
+
+function withFbq(
+  run: (fbq: NonNullable<Window["fbq"]>) => void,
+  attemptsLeft = 25,
+) {
+  if (typeof window === "undefined") return;
+  if (typeof window.fbq === "function") {
+    run(window.fbq);
+    return;
+  }
+  if (attemptsLeft <= 0) return;
+  window.setTimeout(() => withFbq(run, attemptsLeft - 1), 100);
 }
 
 /**
@@ -19,26 +33,30 @@ function pixelId(): string {
  */
 export function identifyMetaUser(email: string | null | undefined) {
   const id = pixelId();
-  if (!id || typeof window === "undefined" || typeof window.fbq !== "function") {
-    return;
-  }
-  const trimmed = email?.trim().toLowerCase();
-  if (!trimmed || !trimmed.includes("@")) {
-    window.fbq("init", id);
-    return;
-  }
-  window.fbq("init", id, { em: trimmed });
+  if (!id) return;
+  withFbq((fbq) => {
+    const trimmed = email?.trim().toLowerCase();
+    if (!trimmed || !trimmed.includes("@")) {
+      fbq("init", id);
+      return;
+    }
+    fbq("init", id, { em: trimmed });
+  });
 }
 
 /** Standard Meta Pixel event (Lead, PageView, Purchase, …). */
 export function trackMetaEvent(
   event: string,
   params?: Record<string, unknown>,
+  options?: { eventID?: string },
 ) {
-  if (typeof window === "undefined" || typeof window.fbq !== "function") {
-    return;
-  }
-  window.fbq("track", event, params);
+  withFbq((fbq) => {
+    if (options?.eventID) {
+      fbq("track", event, params, { eventID: options.eventID });
+    } else {
+      fbq("track", event, params);
+    }
+  });
 }
 
 /** Custom event for Events Manager + funnel diagnosis. */
@@ -46,32 +64,46 @@ export function trackMetaCustom(
   event: string,
   params?: Record<string, unknown>,
 ) {
-  if (typeof window === "undefined" || typeof window.fbq !== "function") {
-    return;
-  }
-  window.fbq("trackCustom", event, params);
+  withFbq((fbq) => {
+    fbq("trackCustom", event, params);
+  });
 }
 
-/** Primary product KPI: successful Vision billing scan. */
+/** Shared with Conversions API for browser/CAPI dedupe. */
+export function newMetaEventId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `lead_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Primary product KPI: successful Vision billing read. */
 export function trackScanComplete(params: {
-  source: "upload" | "sample";
+  source: "upload" | "sample" | "pro_gate";
   service: string;
   amountUsd: number;
-  /** Signed-in email — improves EMQ when present. */
   email?: string | null;
-}) {
+  eventId?: string;
+}): string {
   if (params.email) {
     identifyMetaUser(params.email);
   }
-  trackMetaEvent("Lead", {
-    content_name: "billing_scan",
-    content_category: params.source,
-    value: params.amountUsd,
-    currency: "USD",
-  });
+  const eventId = params.eventId ?? newMetaEventId();
+  trackMetaEvent(
+    "Lead",
+    {
+      content_name: "billing_scan",
+      content_category: params.source,
+      value: params.amountUsd,
+      currency: "USD",
+    },
+    { eventID: eventId },
+  );
   trackMetaCustom("ScanComplete", {
     source: params.source,
     service: params.service,
     amount_usd: params.amountUsd,
+    event_id: eventId,
   });
+  return eventId;
 }

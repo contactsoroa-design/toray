@@ -71,6 +71,7 @@ import {
 } from "@/lib/vision-providers";
 import {
   identifyMetaUser,
+  newMetaEventId,
   trackMetaCustom,
   trackScanComplete,
 } from "@/lib/meta-pixel";
@@ -86,6 +87,14 @@ type ScanSource = "upload" | "sample";
 const STRIPE_URL =
   process.env.NEXT_PUBLIC_STRIPE_PAYMENT_LINK ??
   "https://buy.stripe.com/6oU14m0Lu92V2dL0dx9sk00";
+
+function readDocCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(
+    new RegExp(`(?:^|; )${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=([^;]*)`),
+  );
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
 
 function buildStripeHref(email: string | null) {
   const url = new URL(STRIPE_URL);
@@ -2178,6 +2187,12 @@ export default function Dashboard() {
     try {
       const formData = new FormData();
       formData.append("image", file);
+      const metaEventId = newMetaEventId();
+      formData.append("meta_event_id", metaEventId);
+      const fbp = readDocCookie("_fbp");
+      const fbc = readDocCookie("_fbc");
+      if (fbp) formData.append("meta_fbp", fbp);
+      if (fbc) formData.append("meta_fbc", fbc);
       setScanStep(1);
 
       const response = await fetch("/api/analyze-billing", {
@@ -2191,9 +2206,27 @@ export default function Dashboard() {
         confidence?: "high" | "medium" | "low";
         error?: string;
         code?: string;
+        metaEventId?: string;
       };
+      const eventId =
+        typeof result.metaEventId === "string" && result.metaEventId
+          ? result.metaEventId
+          : metaEventId;
 
       if (response.status === 402 || result.code === "FOUNDING_REQUIRED") {
+        // OpenAI already ran server-side — count Lead even when Pro-gated.
+        if (
+          typeof result.amountUsd === "number" &&
+          isVisionProvider(result.service)
+        ) {
+          trackScanComplete({
+            source: "pro_gate",
+            service: visionProviderToToolName(result.service),
+            amountUsd: result.amountUsd,
+            email: userEmail,
+            eventId,
+          });
+        }
         const hinted = isVisionProvider(result.service)
           ? foundingVisionUnlockLabel(result.service)
           : "Gemini API";
@@ -2229,6 +2262,16 @@ export default function Dashboard() {
       const amountUsd = result.amountUsd;
       const serviceName: ServiceName = visionProviderToToolName(result.service);
 
+      // Fire Lead as soon as Vision succeeds — before Free-limit / save gates
+      // (those used to burn OpenAI without ever notifying Meta).
+      trackScanComplete({
+        source,
+        service: serviceName,
+        amountUsd,
+        email: userEmail,
+        eventId,
+      });
+
       if (
         wouldExceedFreeToolLimit(
           isFounding,
@@ -2263,12 +2306,6 @@ export default function Dashboard() {
           ? `Sample · ${serviceName} · $${amountUsd.toFixed(2)} — now try your own screenshot`
           : `${serviceName} · $${amountUsd.toFixed(2)} saved to your dashboard`,
       );
-      trackScanComplete({
-        source,
-        service: serviceName,
-        amountUsd,
-        email: userEmail,
-      });
     } catch (error) {
       setScanStatus("error");
       setScanMessage(

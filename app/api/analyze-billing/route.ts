@@ -10,6 +10,10 @@ import {
   type BillingVisionAnalysis,
 } from "@/lib/billing-vision";
 import { isFoundingForSession } from "@/lib/founding";
+import {
+  readMetaCookies,
+  sendMetaCapILead,
+} from "@/lib/meta-capi";
 import { isVisionProvider } from "@/lib/vision-providers";
 import { createClient } from "@/lib/supabase/server";
 
@@ -88,6 +92,19 @@ export async function POST(request: Request) {
     }
 
     const image = formData.get("image");
+    const metaEventIdRaw = formData.get("meta_event_id");
+    const metaEventId =
+      typeof metaEventIdRaw === "string" && metaEventIdRaw.trim()
+        ? metaEventIdRaw.trim()
+        : crypto.randomUUID();
+    const metaFbp =
+      typeof formData.get("meta_fbp") === "string"
+        ? String(formData.get("meta_fbp")).trim() || null
+        : null;
+    const metaFbc =
+      typeof formData.get("meta_fbc") === "string"
+        ? String(formData.get("meta_fbc")).trim() || null
+        : null;
 
     if (!(image instanceof File)) {
       return NextResponse.json(
@@ -152,7 +169,38 @@ export async function POST(request: Request) {
     const isFreeProvider = isFreeVisionProvider(provider);
     const isFoundingProvider = isFoundingVisionProvider(provider);
 
+    const cookieHeader = request.headers.get("cookie");
+    const cookies = readMetaCookies(cookieHeader);
+    const capiUser = {
+      clientIpAddress:
+        request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+        request.headers.get("x-real-ip"),
+      clientUserAgent: request.headers.get("user-agent"),
+      fbp: metaFbp || cookies.fbp,
+      fbc: metaFbc || cookies.fbc,
+    };
+
+    async function emitCapILead(source: string) {
+      try {
+        await sendMetaCapILead({
+          eventId: metaEventId,
+          eventSourceUrl:
+            request.headers.get("origin") ||
+            process.env.NEXT_PUBLIC_SITE_URL ||
+            "https://toray.vercel.app/",
+          value: amountUsd,
+          contentCategory: source,
+          service: provider,
+          userData: capiUser,
+        });
+      } catch (error) {
+        console.error("[analyze-billing] capi", error);
+      }
+    }
+
     if (isFoundingProvider && !founding) {
+      // Vision already ran (OpenAI billed). Count as Lead even if Pro-gated.
+      await emitCapILead("pro_gate");
       return NextResponse.json(
         {
           error:
@@ -163,6 +211,7 @@ export async function POST(request: Request) {
           billingPeriod: parsed.billingPeriod,
           confidence: parsed.confidence,
           currencyCode: parsed.currencyCode,
+          metaEventId,
         },
         { status: 402 },
       );
@@ -180,6 +229,7 @@ export async function POST(request: Request) {
       );
     }
 
+    await emitCapILead("upload");
     return NextResponse.json({
       service: provider,
       amountUsd,
@@ -187,6 +237,7 @@ export async function POST(request: Request) {
       confidence: parsed.confidence,
       currencyCode: parsed.currencyCode,
       foundingUnlock: isFoundingProvider,
+      metaEventId,
     });
   } catch (error) {
     console.error("[analyze-billing]", error);
