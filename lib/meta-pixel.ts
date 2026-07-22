@@ -15,20 +15,26 @@ function pixelId(): string {
 
 function withFbq(
   run: (fbq: NonNullable<Window["fbq"]>) => void,
-  attemptsLeft = 25,
+  attemptsLeft = 40,
 ) {
   if (typeof window === "undefined") return;
   if (typeof window.fbq === "function") {
-    run(window.fbq);
+    try {
+      run(window.fbq);
+    } catch (error) {
+      console.error("[meta-pixel] fbq call failed", error);
+    }
     return;
   }
-  if (attemptsLeft <= 0) return;
-  window.setTimeout(() => withFbq(run, attemptsLeft - 1), 100);
+  if (attemptsLeft <= 0) {
+    console.warn("[meta-pixel] fbq not available");
+    return;
+  }
+  window.setTimeout(() => withFbq(run, attemptsLeft - 1), 50);
 }
 
 /**
  * Advanced matching: re-init with email when known (signed-in users).
- * Improves Event Match Quality so Meta can attribute Leads to people.
  * Plain email is fine — the Pixel hashes it before send.
  */
 export function identifyMetaUser(email: string | null | undefined) {
@@ -51,11 +57,12 @@ export function trackMetaEvent(
   options?: { eventID?: string },
 ) {
   withFbq((fbq) => {
-    if (options?.eventID) {
-      fbq("track", event, params, { eventID: options.eventID });
-    } else {
-      fbq("track", event, params);
-    }
+    // Prefer 3-arg form for Pixel Helper / older stub compatibility.
+    // eventID is still sent for CAPI dedupe via custom params when provided.
+    const payload = options?.eventID
+      ? { ...params, event_id: options.eventID }
+      : params;
+    fbq("track", event, payload);
   });
 }
 
@@ -89,21 +96,22 @@ export function trackScanComplete(params: {
     identifyMetaUser(params.email);
   }
   const eventId = params.eventId ?? newMetaEventId();
-  trackMetaEvent(
-    "Lead",
-    {
-      content_name: "billing_scan",
-      content_category: params.source,
-      value: params.amountUsd,
-      currency: "USD",
-    },
-    { eventID: eventId },
-  );
-  trackMetaCustom("ScanComplete", {
-    source: params.source,
-    service: params.service,
-    amount_usd: params.amountUsd,
+  const leadParams = {
+    content_name: "billing_scan",
+    content_category: params.source,
+    value: params.amountUsd,
+    currency: "USD",
     event_id: eventId,
+  };
+
+  withFbq((fbq) => {
+    fbq("track", "Lead", leadParams);
+    fbq("trackCustom", "ScanComplete", {
+      source: params.source,
+      service: params.service,
+      amount_usd: params.amountUsd,
+      event_id: eventId,
+    });
   });
   return eventId;
 }

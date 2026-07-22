@@ -2329,8 +2329,10 @@ export default function Dashboard() {
         throw new Error("Could not load the sample bill");
       }
       const blob = await response.blob();
-      const type = blob.type || "image/png";
-      const file = new File([blob], "sample-openai-billing.png", { type });
+      // Force PNG — some browsers report an empty or generic blob type.
+      const file = new File([blob], "sample-openai-billing.png", {
+        type: "image/png",
+      });
       await runBillingScan(file, { source: "sample" });
     } catch (error) {
       setScanStatus("error");
